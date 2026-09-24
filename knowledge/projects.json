@@ -1,0 +1,5 @@
+[
+  {"id":"daslab","name":"DAS Lab 컨설팅·시뮬레이션·디지털트윈·AI R&D","source":"대표의 구축 요청","created_at":"2026-09-24T00:00:00+09:00","project_id":"daslab","verification_status":"user_supplied","knowledge":[]},
+  {"id":"franchise","name":"프랜차이즈·출점 지원","source":"대표가 제공한 시험 업무 배경","created_at":"2026-09-24T00:00:00+09:00","project_id":"franchise","verification_status":"user_supplied_not_customer_validated","knowledge":["출점 담당자는 도면 외주와 수정 요청, 철거·전기·배관·목공 업체 탐색, 견적 비교, 턴키/분리발주 판단, 공정 일정 및 현장 점검, 점주 이슈 관리에 많은 시간을 쓴다.","고객 인터뷰·정량 절감률·시장규모 자료는 제공되지 않았다."]},
+  {"id":"ventures","name":"신사업·미디어 실험","source":"대표의 구축 요청","created_at":"2026-09-24T00:00:00+09:00","project_id":"ventures","verification_status":"user_supplied","knowledge":[]}
+]

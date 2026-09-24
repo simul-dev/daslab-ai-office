@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#112b32">
+  <title>DAS Lab AI Office</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="DAS Lab AI Office 홈"><span class="brand-mark">D<span>↗</span></span><span>DAS Lab<span class="brand-sub">AI OFFICE</span></span></a>
+      <div class="workspace-tag"><span class="dot"></span>다스랩 내부 업무 공간</div>
+      <div class="nav-label">WORKSPACE</div>
+      <a class="nav-item active" href="#workspace"><span aria-hidden="true">▦</span> 업무 보드 <span class="nav-arrow">↗</span></a>
+      <div class="team-section">
+        <div class="nav-label">OUR TEAM</div>
+        <div class="team-member"><span class="avatar executive">대표</span><div><strong>대표</strong><small>목표 설정 · 결과 승인</small></div><span class="you">YOU</span></div>
+        <div class="team-member"><span class="avatar">PM</span><div><strong>총괄 PM</strong><small>코드 기반 Planner · 명세 정리</small></div></div>
+        <div class="team-member"><span class="avatar">CX</span><div><strong>실행 담당</strong><small>실제 Codex Worker · 산출물 작성</small></div></div>
+        <div class="team-member"><span class="avatar">QA</span><div><strong>검증 담당</strong><small>코드 기반 Reviewer · 기본 검증</small></div></div>
+      </div>
+      <div class="sidebar-bottom"><span class="local-label">LOCAL WORKSPACE</span><p>업무와 지식은 이 프로젝트에.<br>최종 판단은 대표에게.</p><span class="version">FIRST WORKING VERSION · 01</span></div>
+    </aside>
+    <main id="workspace">
+      <header class="topbar"><span>주식회사 다스랩 <span class="slash">/</span> <strong>업무 보드</strong></span><div class="topbar-right"><span class="local-pill">로컬 전용</span><span class="user-avatar">대표</span></div></header>
+      <div class="page">
+        <section class="page-heading"><div><p class="eyebrow">DAS LAB AI OFFICE</p><h1>생각을 실행으로,<br class="mobile-only"> 업무를 결과로.</h1><p class="page-intro">목표를 등록하고, 실행 근거를 확인한 뒤 결과를 승인하세요.</p></div><button id="new-task" class="button primary"><span aria-hidden="true">＋</span> 새 업무 등록</button></section>
+        <div id="global-error" class="notice error" role="alert" hidden></div>
+        <section class="worker-strip" aria-label="실행 연결 상태"><div class="worker-main"><span id="worker-dot" class="dot pending"></span><strong id="worker-title">작업자 연결 확인 중</strong><span id="worker-auth" class="muted"></span></div><div id="worker-limits" class="worker-limits">실행 한도를 불러오는 중</div><p id="worker-message" class="worker-note"></p></section>
+        <section class="stats" aria-label="업무 현황"><div class="stat"><span>전체 업무</span><strong id="count-all">0</strong><small>등록된 업무</small></div><div class="stat"><span><i class="dot blue"></i> 실행 중</span><strong id="count-running">0</strong><small>작업자 1개로 순차 실행</small></div><div class="stat review-stat"><span><i class="dot amber"></i> 검토 필요</span><strong id="count-review">0</strong><small>대표의 확인을 기다립니다</small></div><div class="stat"><span><i class="dot"></i> 완료</span><strong id="count-completed">0</strong><small>검토 및 승인 완료</small></div></section>
+        <section class="board">
+          <div class="task-panel"><div class="panel-title"><h2>업무 목록 <span id="list-count" class="number-label">0</span></h2><button id="refresh" class="icon-button" title="새로고침" aria-label="새로고침">↻</button></div><div class="list-controls"><input id="search" type="search" placeholder="업무 검색" aria-label="업무 검색"><select id="status-filter" aria-label="상태 필터"><option value="">모든 상태</option><option value="queued">대기</option><option value="running">실행 중</option><option value="review">검토 필요</option><option value="completed">완료</option><option value="failed">실패</option><option value="cancelled">취소</option></select></div><div id="task-list" class="task-list" aria-live="polite"><div class="empty-list">업무를 불러오는 중입니다.</div></div><button id="sample-task" class="sample-button"><span>첫 업무가 필요하다면</span><strong>출점 지원 MVP 시험 업무 등록 <span aria-hidden="true">↗</span></strong></button></div>
+          <div id="task-detail" class="detail-panel"><div class="empty-detail"><div class="empty-symbol" aria-hidden="true">↗</div><p class="eyebrow">YOUR NEXT STEP</p><h2>작은 업무 하나로 시작하세요.</h2><p>목표와 완료 기준을 등록하면 PM이 명세를 정리하고<br>Codex가 실행한 결과를 이곳에서 검토할 수 있습니다.</p><div class="empty-flow"><span>등록</span><i>→</i><span>실행</span><i>→</i><span>검증</span><i>→</i><span>승인</span></div><button id="empty-new-task" class="button secondary">첫 업무 등록하기</button></div></div>
+        </section>
+        <footer class="page-footer"><span>DAS Lab · AI Office</span><span>비용 및 잔여 사용량은 확인되지 않아 표시하지 않습니다.</span></footer>
+      </div>
+    </main>
+  </div>
+  <dialog id="task-dialog" class="task-dialog"><form id="task-form"><div class="dialog-heading"><div><p class="eyebrow">NEW TASK</p><h2>업무 등록</h2></div><button type="button" class="icon-button close-dialog" aria-label="닫기">×</button></div><p class="dialog-intro">완료된 모습을 구체적으로 적어 주세요. 등록 후 직접 실행할 수 있습니다.</p><div id="form-error" class="notice error" role="alert" hidden></div><div class="form-grid"><label>업무명 <input name="title" required maxlength="160" placeholder="예: 프랜차이즈 출점 지원 MVP의 첫 기능 제안"></label><div class="form-row"><label>사업 분류<select name="project_id" required></select></label><label class="priority-field">우선순위<select name="priority"><option value="normal">보통</option><option value="high">높음</option><option value="low">낮음</option></select></label></div><label>목표<textarea name="goal" required maxlength="6000" rows="3" placeholder="해결할 문제와 이 업무의 목적"></textarea></label><label>입력 자료<textarea name="inputs" required maxlength="30000" rows="4" placeholder="배경 정보, 참고 자료, 이미 확인한 사실"></textarea></label><label>완료 기준 <span class="label-hint">한 줄에 하나씩 입력</span><textarea name="acceptance_criteria" required rows="4" placeholder="확인된 문제와 가정을 구분한다.&#10;실행 가능한 후속 작업을 제안한다."></textarea></label></div><div class="dialog-actions"><button type="button" class="button subtle close-dialog">취소</button><button type="submit" class="button primary" id="submit-task">업무 등록</button></div></form></dialog>
+  <dialog id="artifact-dialog" class="artifact-dialog"><div class="dialog-heading"><div><p class="eyebrow">SAVED ARTIFACT</p><h2 id="artifact-title">산출물</h2></div><button type="button" class="icon-button" id="close-artifact" aria-label="닫기">×</button></div><p class="muted artifact-help">실행 폴더에 저장된 실제 파일입니다.</p><pre id="artifact-content" class="artifact-content"></pre></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "planner_provider": "code",
+  "worker_provider": "codex",
+  "reviewer_provider": "code",
+  "max_attempts": 3,
+  "daily_runs": 10,
+  "timeout_seconds": 600
+}

@@ -1,0 +1,6 @@
+[
+  {"id":"owner","name":"대표","instruction":"목표·우선순위·완료 기준을 정하고 결과와 근거를 검토한 뒤 승인한다.","source":"대표의 구축 요청","created_at":"2026-09-24T00:00:00+09:00","project_id":"all","verification_status":"user_supplied"},
+  {"id":"pm","name":"총괄 PM / Planner","instruction":"입력을 보존해 명세·작업·완료 기준을 정리하고 실행 담당에게 배정한다. v0.1은 CodePlanner이며 교체 가능하다.","source":"대표의 구축 요청","created_at":"2026-09-24T00:00:00+09:00","project_id":"all","verification_status":"user_supplied"},
+  {"id":"worker","name":"실행 담당","instruction":"근거 있는 분석·문서·코드 제안 산출물을 작성한다. 제공된 입력과 가정을 구분한다. 외부 발송·구매·운영 배포 금지. 비밀정보 접근 금지.","source":"대표의 구축 요청","created_at":"2026-09-24T00:00:00+09:00","project_id":"all","verification_status":"user_supplied"},
+  {"id":"reviewer","name":"검증 담당 / Reviewer","instruction":"실제 실행 기록과 파일·구조·기준별 근거를 검사한다. 작성자의 완료 주장만으로 승인하지 않는다. 기본 검증 통과 후 대표의 내용 검토를 기다린다.","source":"대표의 구축 요청","created_at":"2026-09-24T00:00:00+09:00","project_id":"all","verification_status":"user_supplied"}
+]
