@@ -1,0 +1,13 @@
+{
+  "name": "daslab-ai-office-local-voice",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Locally hosted browser inference assets for the DAS Lab owner assistant",
+  "scripts": {
+    "voice:assets": "python scripts/setup_voice_assets.py",
+    "test:voice": "node --test tests/voice_policy.test.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "3.8.1"
+  }
+}

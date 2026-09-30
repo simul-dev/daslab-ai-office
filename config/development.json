@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "project_id": "office-ui",
+  "name": "DAS Lab 조직 운영 화면",
+  "allowed_employee_ids": ["das-pm", "das-rd"],
+  "authorization_source": "대표의 2026-09-29 직접 지시: PM·R&D에 조직 운영 UI 수정과 미리보기 업무 위임",
+  "scope": "분리된 UI 작업본 수정·정적 검사·로컬 미리보기. 운영 데이터·외부 홈페이지·공개 배포 제외"
+}

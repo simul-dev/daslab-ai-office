@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from .outcomes import assessment
+
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -87,6 +89,36 @@ class Store:
                 out[table] = [json.loads(r[0]) for r in db.execute(f"SELECT data FROM {table} WHERE task_id=? ORDER BY rowid", (task_id,))]
             return out
 
+    def defer(self, task_id, reason):
+        with self.connect() as db:
+            task = self.read(db, "tasks", task_id)
+            if task["status"] != "queued":
+                return
+            if task.get("auto_start") and task.get("start_error") == reason:
+                return
+            task.update(status="queued", auto_start=True, start_error=reason, updated_at=now())
+            self.save(db, "tasks", task)
+            self.event(db, task, "waiting", "미션을 보관했습니다. " + reason)
+
+    def requeue_requested_revision(self, task_id, reason, max_attempts):
+        """Only a newly recorded owner revision can authorize a queued retry."""
+        with self.connect() as db:
+            task = self.read(db, "tasks", task_id)
+            if task["status"] != "failed" or task.get("verification_status") != "human_rejected":
+                return False, reason
+            attempts = db.execute("SELECT COUNT(*) FROM runs WHERE task_id=?", (task_id,)).fetchone()[0]
+            if attempts >= max_attempts:
+                reason = "수정 요청은 저장했지만 이 미션의 최대 실행 횟수에 도달했습니다."
+                task.update(auto_start=False, start_error=reason, error=reason, updated_at=now())
+                self.save(db, "tasks", task)
+                self.event(db, task, "revision_limit", reason)
+                return False, reason
+            task.update(status="queued", auto_start=True, start_error=reason, error=None,
+                        verification_status="revision_queued", updated_at=now())
+            self.save(db, "tasks", task)
+            self.event(db, task, "revision_queued", "수정 요청을 보관했습니다. " + reason)
+            return True, reason
+
     def usage_from(self, db):
         runs = [json.loads(r[0]) for r in db.execute("SELECT data FROM runs")]
         today = datetime.now(timezone(timedelta(hours=9))).date()
@@ -105,7 +137,7 @@ class Store:
             usage = self.usage_from(db)
             attempts = db.execute("SELECT COUNT(*) FROM runs WHERE task_id=?", (task_id,)).fetchone()[0]
             if usage["active_runs"]:
-                raise Conflict("작업자 1개가 실행 중입니다. 종료 후 실행해 주세요.")
+                raise Conflict("다른 미션을 처리 중입니다. 종료되면 대기 중인 미션을 이어서 실행합니다.")
             if attempts >= config["max_attempts"]:
                 raise Conflict("이 업무의 최대 실행 횟수에 도달했습니다.")
             if usage["runs_today"] >= config["daily_runs"]:
@@ -115,29 +147,35 @@ class Store:
                    "started_at": now(), "finished_at": None, "error": None, "provider": config["worker_provider"],
                    "run_dir": str(run_root / task_id / run_id), "artifacts": [], "verification": None,
                    "source": "task:" + task_id, "created_at": now(), "project_id": task["project_id"], "verification_status": "pending"}
-            task.update(status="running", error=None, updated_at=now(), verification_status="pending")
+            task.update(status="running", error=None, start_error=None, auto_start=False, updated_at=now(), verification_status="pending")
             self.save(db, "tasks", task)
             self.save(db, "runs", run)
             self.event(db, task, "started", f"실제 {run['provider']} 작업자 실행 요청 · {attempts + 1}회차", "run:" + run_id)
             return task, run
 
-    def finish(self, task_id, run_id, status, error, verification, artifacts):
+    def finish(self, task_id, run_id, status, error, verification, artifacts, report=None):
         with self.connect() as db:
             task = self.read(db, "tasks", task_id)
             run = self.read(db, "runs", run_id)
             if run["task_id"] != task_id or run["status"] != "running" or task["status"] != "running":
                 raise Conflict("현재 실행에 해당하는 결과만 저장할 수 있습니다.")
-            if status not in ("review", "failed", "cancelled"):
+            if status not in ("completed", "review", "failed", "cancelled"):
                 raise Conflict("허용되지 않는 실행 종료 상태입니다.")
-            if status == "review" and not (verification or {}).get("passed"):
+            if status in ("completed", "review") and not (verification or {}).get("passed"):
                 raise Conflict("검증 통과 근거가 있어야 검토를 요청할 수 있습니다.")
-            vstatus = "basic_checks_passed_human_review_required" if status == "review" else "failed"
+            if status == "completed" and assessment(report, task["acceptance_criteria"], True)["status"] != "achieved":
+                raise Conflict("목표 달성과 모든 완료 기준의 충족 근거가 있어야 자동 완료할 수 있습니다.")
+            vstatus = "reported_achieved" if status == "completed" else "report_ready" if status == "review" else "failed"
             run.update(status=status, error=error, finished_at=now(), verification=verification,
                        artifacts=artifacts, verification_status=vstatus)
+            if report is not None:
+                run["report"] = report
             task.update(status=status, error=error, updated_at=now(), verification_status=vstatus)
             self.save(db, "runs", run)
             self.save(db, "tasks", task)
-            self.event(db, task, status, "산출물과 기본 검증 근거가 저장되었습니다. 대표 검토가 필요합니다." if status == "review" else error or "실행 취소", "run:" + run_id)
+            message = "목표 달성 보고와 산출물이 저장되었습니다." if status == "completed" else (
+                "결과 보고가 도착했습니다. 달성한 내용과 남은 일을 확인할 수 있습니다." if status == "review" else error or "실행 취소")
+            self.event(db, task, status, message, "run:" + run_id)
 
     def cancel_idle(self, task_id):
         with self.connect() as db:
@@ -151,10 +189,12 @@ class Store:
     def review(self, task_id, decision, note):
         if decision not in ("approve", "reject"):
             raise ValueError("검토 결정이 올바르지 않습니다.")
+        if decision == "reject" and not note.strip():
+            raise ValueError("바꾸고 싶은 내용을 적어 주세요.")
         with self.connect() as db:
             task = self.read(db, "tasks", task_id)
-            if task["status"] != "review":
-                raise Conflict("검토 필요 상태의 업무만 검토할 수 있습니다.")
+            if task["status"] != "review" and not (decision == "reject" and task["status"] == "completed"):
+                raise Conflict("결과 보고가 있는 미션만 검토하거나 수정을 요청할 수 있습니다.")
             status = "completed" if decision == "approve" else "failed"
             task.update(status=status, error=None if decision == "approve" else "대표 반려: " + note,
                         updated_at=now(), verification_status="human_approved" if decision == "approve" else "human_rejected")

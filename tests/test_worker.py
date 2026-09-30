@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from office.worker import CodexWorker, clean_env
+from office.worker import CodexWorker, RESULT_SCHEMA, clean_env, render_report
 
 
 class CodexAdapterTests(unittest.TestCase):
@@ -61,6 +61,38 @@ class CodexAdapterTests(unittest.TestCase):
         popen.assert_not_called()
         self.assertFalse(result["completed"])
         self.assertTrue(result["error"])
+        prompt = (self.folder / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("unknown이 하나라도 있으면 null", prompt)
+        self.assertIn("제안서나 실행 계획만 작성했다면 원래 미션을 달성했다고 하지 마세요", prompt)
+        self.assertIn("실제 요청한 결과만 간결하게 나누세요", prompt)
+        self.assertIn("품질 규칙을 그 자체가 요청한 결과가 아닌데 진행 항목으로 세지 마세요", prompt)
+
+    def test_development_enables_only_scoped_workspace_tools(self):
+        workspace = self.folder / "workspace"
+        workspace.mkdir()
+        def launch(command, **kwargs):
+            self.assertIn('default_permissions="office-development"', command)
+            self.assertIn('permissions.office-development.extends=":workspace"', command)
+            self.assertIn('permissions.office-development.network.enabled=false', command)
+            self.assertNotIn('--sandbox', command)
+            self.assertNotIn('danger-full-access', command)
+            self.assertIn('features.code_mode_host=true', command)
+            self.assertIn('features.shell_tool=true', command)
+            if os.name == 'nt':
+                self.assertIn('windows.sandbox="elevated"', command)
+            self.assertIn('features.browser_use=false', command)
+            self.assertEqual(kwargs['cwd'], workspace)
+            process = self.original_popen([sys.executable, '-c', 'import time; time.sleep(60)'], **kwargs)
+            self.processes.append(process)
+            return process
+        with patch.object(self.worker, 'probe', return_value={'available': True, 'version': 'test'}), \
+             patch.object(self.worker, 'executable', return_value='never-executed-codex'), \
+             patch('office.worker.subprocess.Popen', side_effect=launch):
+            self.worker.execute(self.folder, 'Fixture', 1, threading.Event(), workspace_dir=workspace)
+
+    def test_development_rejects_unrelated_workspace(self):
+        with self.assertRaises(ValueError):
+            self.worker.execute(self.folder, 'Fixture', 1, threading.Event(), workspace_dir=self.folder)
 
     def test_api_key_login_is_not_accepted_as_chatgpt_authentication(self):
         responses = [subprocess.CompletedProcess([], 0, stdout="codex-cli fixture", stderr=""),
@@ -138,6 +170,41 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertFalse(result[0]["completed"])
         self.assertIsNotNone(self.processes[0].poll())
+
+
+class ReportRenderingTests(unittest.TestCase):
+    def test_generic_report_leads_with_outcome_and_keeps_internal_paths_out_of_prose(self):
+        document = {
+            "summary": "자료를 비교해 첫 실행안을 정리했습니다.",
+            "analysis": {"priority": "normal", "complexity": "simple", "rationale": "제공된 자료 두 건의 비교입니다.", "process": ["자료 비교", "실행안 작성"]},
+            "outcome": {"status": "partial", "progress_percent": 50, "basis": "2개 기준 중 1개 충족. 실제 발송은 수행하지 않았습니다."},
+            "report": [{"title": "권고안", "content": "A안을 우선 검토하세요. 초기 비용이 더 낮습니다."}],
+            "accomplishments": ["자료 비교"], "remaining": ["고객에게 발송"], "limitations": ["발송 기능 없음"],
+            "evidence": [{"criterion": "자료 비교", "status": "met", "artifact_section": "report[0].content", "explanation": "두 안의 비용을 비교했습니다."}],
+        }
+        report = render_report(document, 12.34)
+        self.assertIn("일부 달성 · 진행률 50%", report)
+        self.assertIn("처리 시간: 12.3초", report)
+        self.assertIn("## 권고안\n\nA안을", report)
+        self.assertIn("<summary>처리 판단과 근거 보기</summary>", report)
+        self.assertNotIn("report[0].content", report)
+        self.assertNotIn("대표의 내용 검토", report)
+        document["milestones"] = [{"criterion": "자료 비교", "deliverable": "견적 가격 비교", "status": "met",
+                                   "artifact_section": "report", "explanation": "견적 가격을 비교했습니다."}]
+        self.assertIn("견적 가격 비교 — 충족", render_report(document))
+        document["outcome"].update(status="blocked", progress_percent=None)
+        self.assertIn("진행 막힘 · 진행률 산정 불가", render_report(document))
+
+    def test_schema_does_not_require_a_specific_business_mvp_for_every_mission(self):
+        fields = RESULT_SCHEMA["properties"]
+        self.assertIn("analysis", fields)
+        self.assertIn("report", fields)
+        self.assertIn("outcome", fields)
+        self.assertIn("milestones", fields)
+        self.assertIn("milestones", RESULT_SCHEMA["required"])
+        self.assertNotIn("mvp", fields)
+        self.assertNotIn("required_inputs", fields)
+        self.assertEqual(fields["outcome"]["properties"]["progress_percent"]["type"], ["integer", "null"])
 
 
 if __name__ == "__main__":

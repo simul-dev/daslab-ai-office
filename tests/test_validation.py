@@ -108,5 +108,117 @@ class CodeReviewerTests(unittest.TestCase):
         self.assertFalse(self.review()["passed"])
 
 
+class MissionReportTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.folder = Path(self.temp.name)
+        self.criteria = ["Compare the supplied options.", "Recommend the first next step."]
+        self.execution = {"exit_code": 0, "completed": True, "error": None}
+        self.document = {
+            "summary": "The supplied options favor the lower-cost pilot; begin with one existing customer.",
+            "analysis": {"priority": "normal", "complexity": "simple", "rationale": "A bounded comparison of supplied information.",
+                         "process": ["Compare supplied options", "Recommend one next step"]},
+            "outcome": {"status": "achieved", "progress_percent": 100, "basis": "Both of the two comparison criteria are met."},
+            "report": [{"title": "Comparison", "content": "Option A costs less in the supplied figures. Option B requires a larger initial team."},
+                       {"title": "Next step", "content": "Ask one existing customer to try the Option A pilot."}],
+            "accomplishments": ["Compared the two supplied options", "Recommended a pilot"],
+            "remaining": [], "limitations": ["This is a document recommendation; no customer was contacted."],
+            "evidence": [
+                {"criterion": self.criteria[0], "status": "met", "artifact_section": "report[0].content", "explanation": "The comparison names each option and a tradeoff."},
+                {"criterion": self.criteria[1], "status": "met", "artifact_section": "report[1].content", "explanation": "A concrete next step is included."},
+            ],
+        }
+        (self.folder / "report.md").write_text("# Mission result\nA comparison and recommendation.\n", encoding="utf-8")
+        (self.folder / "events.jsonl").write_text('{"type":"turn.completed"}\n', encoding="utf-8")
+
+    def review(self):
+        (self.folder / "result.json").write_text(json.dumps(self.document), encoding="utf-8")
+        return validate_run(self.folder, self.execution, self.criteria, "franchise")
+
+    def make_partial(self, unknown=False):
+        self.document["evidence"][1].update(status="unknown" if unknown else "unmet", artifact_section="remaining")
+        self.document["remaining"] = ["The next step requires information that was not supplied."]
+        self.document["outcome"].update(status="partial", progress_percent=None if unknown else 50,
+                                        basis="One of two criteria met; the other is not completed.")
+
+    def test_generic_document_result_passes_without_an_owner_approval_gate(self):
+        result = self.review()
+        self.assertTrue(result["passed"])
+        self.assertFalse(result["review_required"])
+        self.assertEqual(result["outcome"]["status"], "achieved")
+        self.assertEqual(result["assessment_source"], "ai_self_assessment")
+
+    def test_partial_completion_is_valid_report_not_full_achievement(self):
+        self.make_partial()
+        result = self.review()
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["outcome"], self.document["outcome"])
+
+    def test_external_execution_cannot_be_replaced_by_a_plan_claim(self):
+        self.criteria[1] = "Send the chosen proposal to the customer."
+        self.document["evidence"][1]["criterion"] = self.criteria[1]
+        self.make_partial()
+        self.document["remaining"] = ["Sending is unavailable in this worker; the customer has not received a proposal."]
+        self.document["outcome"]["status"] = "blocked"
+        self.assertTrue(self.review()["passed"])
+        self.document["outcome"].update(status="achieved", progress_percent=100)
+        self.assertFalse(self.review()["passed"])
+
+    def test_unknown_criterion_requires_unknown_progress(self):
+        self.make_partial(unknown=True)
+        self.assertTrue(self.review()["passed"])
+        for progress in (0, 50, 90, 100):
+            with self.subTest(progress=progress):
+                self.document["outcome"]["progress_percent"] = progress
+                self.assertFalse(self.review()["passed"])
+
+    def test_progress_comes_from_criteria_not_an_arbitrary_estimate(self):
+        self.make_partial()
+        for progress in (0, 49, 51, 100, True, 50.0, "50", None):
+            with self.subTest(progress=progress):
+                self.document["outcome"]["progress_percent"] = progress
+                self.assertFalse(self.review()["passed"])
+
+    def test_partial_and_full_claims_must_match_the_criterion_states(self):
+        self.document["outcome"]["status"] = "partial"
+        self.assertFalse(self.review()["passed"])
+        self.make_partial()
+        self.document["outcome"]["status"] = "achieved"
+        self.assertFalse(self.review()["passed"])
+
+    def test_remaining_work_is_required_for_incomplete_reports(self):
+        self.document["remaining"] = ["Still need to make the recommendation."]
+        self.assertFalse(self.review()["passed"])
+        self.make_partial()
+        self.document["remaining"] = []
+        self.assertFalse(self.review()["passed"])
+
+    def test_empty_report_and_circular_evidence_do_not_pass(self):
+        original = copy.deepcopy(self.document)
+        for reference in ("outcome", "evidence[0]", "analysis", "report[99]", "report[0].missing", "limitations"):
+            with self.subTest(reference=reference):
+                self.document = copy.deepcopy(original)
+                self.document["evidence"][0]["artifact_section"] = reference
+                self.assertFalse(self.review()["passed"])
+        self.document = copy.deepcopy(original)
+        self.document["report"] = []
+        self.assertFalse(self.review()["passed"])
+
+    def test_duplicate_missing_and_unrecognized_evidence_status_fail(self):
+        original = copy.deepcopy(self.document["evidence"])
+        for evidence in (original[:1], [original[0], original[0]],
+                         [original[0], {**original[1], "status": "done"}]):
+            with self.subTest(evidence=evidence):
+                self.document["evidence"] = evidence
+                self.assertFalse(self.review()["passed"])
+
+    def test_failed_execution_never_releases_a_success_outcome(self):
+        self.execution["completed"] = False
+        result = self.review()
+        self.assertFalse(result["passed"])
+        self.assertIsNone(result["outcome"])
+
+
 if __name__ == "__main__":
     unittest.main()

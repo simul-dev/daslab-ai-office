@@ -19,12 +19,29 @@ TEXT = {"type": "string"}
 TEXTS = {"type": "array", "items": TEXT}
 RESULT_SCHEMA = _object({
     "summary": TEXT,
-    "confirmed_problems": {"type": "array", "items": _object({"statement": TEXT, "source": TEXT})},
-    "assumptions": TEXTS,
-    "mvp": _object({"name": TEXT, "rationale": TEXT}),
-    "required_inputs": TEXTS, "expected_outputs": TEXTS, "validation_plan": TEXTS,
-    "completion_criteria": TEXTS, "next_tasks": TEXTS,
-    "evidence": {"type": "array", "items": _object({"criterion": TEXT, "artifact_section": TEXT, "explanation": TEXT})},
+    "analysis": _object({
+        "priority": {"type": "string", "enum": ["high", "normal", "low"]},
+        "complexity": {"type": "string", "enum": ["simple", "moderate", "complex"]},
+        "rationale": TEXT, "process": TEXTS,
+    }),
+    "outcome": _object({
+        "status": {"type": "string", "enum": ["achieved", "partial", "blocked"]},
+        "progress_percent": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+        "basis": TEXT,
+    }),
+    "report": {"type": "array", "items": _object({"title": TEXT, "content": TEXT})},
+    "accomplishments": TEXTS,
+    "remaining": TEXTS,
+    "evidence": {"type": "array", "items": _object({
+        "criterion": TEXT,
+        "status": {"type": "string", "enum": ["met", "unmet", "unknown"]},
+        "artifact_section": TEXT, "explanation": TEXT,
+    })},
+    "milestones": {"type": "array", "items": _object({
+        "criterion": TEXT, "deliverable": TEXT,
+        "status": {"type": "string", "enum": ["met", "unmet", "unknown"]},
+        "artifact_section": TEXT, "explanation": TEXT,
+    })},
     "limitations": TEXTS,
 })
 
@@ -84,7 +101,7 @@ class _WindowsJob:
             self.handle = None
 
 
-def render_report(result):
+def _render_legacy_report(result):
     parts = ["# 업무 산출물", "", result["summary"], "", "## 확인된 문제 · 제공된 배경 기준"]
     parts.extend(f"- {p['statement']}\n  - 출처: {p['source']}" for p in result["confirmed_problems"])
     sections = [("확인이 필요한 가정", "assumptions"), ("필요한 입력 데이터", "required_inputs"),
@@ -96,7 +113,42 @@ def render_report(result):
     parts += ["", "## 완료 기준별 제출 근거", ""]
     for item in result["evidence"]:
         parts += ["- 기준: " + item["criterion"], "  - 위치: " + item["artifact_section"], "  - 근거: " + item["explanation"]]
-    parts += ["", "---", "이 보고서는 AI 실행 산출물입니다. 기본 검증 후에도 대표의 내용 검토와 실제 고객 검증이 필요합니다.", ""]
+    parts += ["", "---", "이전 형식으로 작성된 AI 보고서입니다. 미션 달성 여부와 진행률은 기록되지 않았습니다.", ""]
+    return "\n".join(parts)
+
+
+def render_report(result, duration_seconds=None):
+    """A readable report is the product; structured fields are internal records."""
+    if not any(field in result for field in ("analysis", "outcome", "report")):
+        return _render_legacy_report(result)
+    outcome = result["outcome"]
+    status = {"achieved": "달성", "partial": "일부 달성", "blocked": "진행 막힘"}[outcome["status"]]
+    progress = outcome["progress_percent"]
+    progress_text = "산정 불가" if progress is None else f"{progress}%"
+    parts = ["# 미션 결과 보고", "", f"**{status} · 진행률 {progress_text}**", "", result["summary"]]
+    if duration_seconds is not None:
+        parts += ["", f"처리 시간: {duration_seconds:.1f}초"]
+    parts += ["", outcome["basis"], "", "달성 여부는 AI의 근거 기반 판단입니다. 진행률은 요청한 세부 결과의 완료 비율(나누지 않은 경우 완료 기준 비율)이며, 실제 사업 성과나 투입 시간의 비율이 아닙니다."]
+    for section in result["report"]:
+        parts += ["", "## " + section["title"], "", section["content"]]
+    for title, key in (("완료한 일", "accomplishments"), ("남은 일", "remaining"), ("결과의 한계", "limitations")):
+        if result[key]:
+            parts += ["", "## " + title, ""] + ["- " + item for item in result[key]]
+    analysis = result["analysis"]
+    priority = {"high": "높음", "normal": "보통", "low": "낮음"}[analysis["priority"]]
+    complexity = {"simple": "간단", "moderate": "보통", "complex": "복잡"}[analysis["complexity"]]
+    parts += ["", "<details>", "<summary>처리 판단과 근거 보기</summary>", "",
+              f"우선순위 {priority} · 난이도 {complexity}", "", analysis["rationale"], ""]
+    parts += [f"{i}. {step}" for i, step in enumerate(analysis["process"], 1)]
+    labels = {"met": "충족", "unmet": "미충족", "unknown": "확인 불가"}
+    if result.get("milestones"):
+        parts += ["", "### 요청한 결과별 진행", ""]
+        for item in result["milestones"]:
+            parts += [f"- {item['deliverable']} — {labels[item['status']]}", "  " + item["explanation"]]
+        parts += ["", "### 원래 완료 기준", ""]
+    for item in result["evidence"]:
+        parts += ["", f"- {item['criterion']} — {labels[item['status']]}", "  " + item["explanation"]]
+    parts += ["", "</details>", ""]
     return "\n".join(parts)
 
 
@@ -142,10 +194,44 @@ class CodexWorker:
             self._cached_probe, self._probe_time = result, time.monotonic()
             return dict(result)
 
-    def execute(self, run_dir: Path, prompt: str, timeout_seconds: int, cancel_event: threading.Event):
+    def execute(self, run_dir: Path, prompt: str, timeout_seconds: int, cancel_event: threading.Event, on_event=None, workspace_dir=None):
         run_dir = run_dir.resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
-        prompt += "\n추가 출력 규칙: evidence.artifact_section에는 관련 JSON 최상위 필드명을 정확히 쓰세요(여러 개면 쉼표로 구분). 각 목록은 구체적인 내용을 최소 한 개 포함해야 합니다."
+        development = workspace_dir is not None
+        workspace = Path(workspace_dir).resolve() if development else run_dir
+        if development and (workspace != run_dir / "workspace" or not workspace.is_dir() or Path(workspace_dir).is_symlink()):
+            raise ValueError("개발 실행은 이번 실행의 분리된 workspace에서만 가능합니다.")
+        prompt += (
+            "\n추가 출력 규칙: 미션의 의도와 우선순위·난이도·처리 순서를 내부적으로 판단하여 analysis에 기록하세요. "
+            "summary는 보고받는 사람이 바로 이해할 수 있는 결론 1~3문장, report는 미션에 적합한 제목과 실제 산출물 본문입니다. "
+            "특정 MVP 양식을 모든 업무에 강제하지 마세요. accomplishments에는 실제 완료한 일, remaining에는 미완료한 일만 쓰세요. "
+            "해당 사항이 없는 remaining/limitations 목록은 비워 두세요. evidence는 제공된 완료 기준을 원문 그대로 한 번씩 포함하고 "
+            "충족 met / 미충족 unmet / 확인 불가 unknown을 구별하세요. evidence.artifact_section은 실제 내용이 있는 "
+            "report, accomplishments, remaining, limitations의 필드 경로이며 여러 개면 쉼표로 구분하세요. "
+            "met 근거는 report 또는 accomplishments를 가리켜야 합니다. 요청에 구별되는 결과가 여럿이면 "
+            "milestones에 실제 요청한 결과만 간결하게 나누세요. 단순한 한 가지 결과는 []로 두세요. "
+            "각 항목의 criterion은 원문 완료 기준, deliverable은 중복 없는 구체 결과명이며 모든 원문 기준을 빠짐없이 다뤄야 합니다. "
+            "사실 구분·정직한 보고·작업 판단·계획 작성 같은 준비나 품질 규칙을 그 자체가 요청한 결과가 아닌데 진행 항목으로 세지 마세요. "
+            "쉬운 항목만 잘게 나눠 진행률을 높이지 말고 실제 요청한 결과 단위로 나누세요. "
+            "각 criterion의 evidence.status는 해당 milestones 모두 met이면 met, unknown이 있으면 unknown, 그 외에는 unmet입니다. "
+            "milestones 근거 경로도 evidence와 동일한 규칙을 따릅니다. 진행률은 milestones가 있으면 (완료 항목 수 / 전체 항목 수) * 100, "
+            "없으면 (충족 기준 수 / 전체 기준 수) * 100의 정수 버림값입니다. unknown이 하나라도 있으면 null이며 임의의 숫자를 만들지 마세요. "
+            "이 비율은 항목 수 기준이며 실제 업무량의 비율이나 실행 중 실시간 진척이 아닙니다. "
+            "모든 원문 기준과 세부 결과가 met일 때만 outcome.status=achieved 및 progress_percent=100입니다. 일부 미달은 partial, "
+            "필수 자료나 실행 권한 부족으로 더 진행할 수 없으면 blocked로 보고하세요. basis에는 계산 근거 또는 산정 불가 이유를 쓰세요. "
+            "실제 발송·구매·개발 적용·배포·고객 확인·외부 조회를 "
+            "요구한 미션에서 제안서나 실행 계획만 작성했다면 원래 미션을 달성했다고 하지 마세요. "
+            "수행하지 못한 실행·검증 기준은 unmet 또는 unknown으로 기록하고 남은 일과 한계를 명확히 보고하세요."
+        )
+        if development:
+            prompt += ("\n이번 실행은 대표가 PM·R&D에 위임한 조직 UI 개발입니다. 작업 폴더의 static/office.html, office.css, office.js와 brand 자산을 읽고 "
+                       "실제 파일을 수정하세요. 셸과 파일 도구를 사용할 수 있습니다. 소스와 BRAND.md를 먼저 확인하세요. "
+                       "작업 폴더 밖 파일·자격증명·운영 DB·서버·권한 설정은 접근하지 마세요. 설치·외부 네트워크·배포는 범위 밖입니다. "
+                       "미리보기 서버는 상위 엔진이 변경 파일 검사를 통과한 뒤 제공합니다. 직접 서버를 시작할 필요는 없습니다. "
+                       "브라우저 시각 검증은 별도로 수행하므로 직접 보지 않은 화면을 확인했다고 주장하지 마세요. "
+                       "파일 수정 없이 코드만 답변하지 마세요. 마지막 응답은 지정된 결과 JSON입니다.")
+        else:
+            prompt += "\n현재 기능은 제공된 자료의 분석과 문서 작성까지입니다."
         (run_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
         (run_dir / "schema.json").write_text(json.dumps(RESULT_SCHEMA, ensure_ascii=False, indent=2), encoding="utf-8")
         result = {"provider": "codex", "exit_code": -1, "completed": False, "error": None, "auth_mode": "chatgpt"}
@@ -159,13 +245,23 @@ class CodexWorker:
                  "code_mode", "code_mode_host", "skill_search", "skill_mcp_dependency_install", "sleep_tool",
                  "view_image", "unbounded_connection_retries", "memories"]
         command = [self.executable(), "--no-daemon", "-a", "never", "exec", "--ignore-user-config", "--ignore-rules",
-                   "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "--json", "--color", "never",
-                   "--cd", str(run_dir), "--output-schema", str(run_dir / "schema.json"),
+                   "--skip-git-repo-check", "--ephemeral",
+                   *(["-c", 'default_permissions="office-development"', "-c", 'permissions.office-development.extends=":workspace"',
+                      "-c", "permissions.office-development.network.enabled=false"] if development else ["--sandbox", "read-only"]),
+                   "--json", "--color", "never",
+                   "--cd", str(workspace), "--output-schema", str(run_dir / "schema.json"),
                    "--output-last-message", str(run_dir / "result.json"),
                    "-c", 'forced_login_method="chatgpt"', "-c", 'model_provider="openai"',
                    "-c", 'web_search="disabled"', "-c", "project_doc_max_bytes=0"]
         for flag in flags:
-            command += ["-c", f"features.{flag}=false"]
+            enabled = development and flag in ("shell_tool", "unified_exec", "view_image", "code_mode_host")
+            command += ["-c", f"features.{flag}={'true' if enabled else 'false'}"]
+        if development:
+            if os.name == "nt":
+                command += ["-c", 'windows.sandbox="elevated"']
+            logo = workspace / "static/brand/daslab-dark.png"
+            if logo.is_file() and not logo.is_symlink():
+                command += ["--image", str(logo)]
         command += ["-"]
         process, job = None, None
         threads = []
@@ -189,13 +285,19 @@ class CodexWorker:
                             event = json.loads(safe)
                             seen["completed"] |= event.get("type") == "turn.completed"
                             seen["failed"] |= event.get("type") in ("turn.failed", "error")
+                            if on_event is not None:
+                                try:
+                                    on_event(event)
+                                except Exception:
+                                    # Observability must not terminate the provider stream reader.
+                                    pass
                         except json.JSONDecodeError:
                             safe = json.dumps({"type": "cli.notice", "message": safe}, ensure_ascii=False) + "\n"
                     handle.write(safe)
                     handle.flush()
 
         try:
-            process = subprocess.Popen(command, cwd=run_dir, env=clean_env(), stdin=subprocess.PIPE,
+            process = subprocess.Popen(command, cwd=workspace, env=clean_env(), stdin=subprocess.PIPE,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                                        start_new_session=os.name != "nt")
@@ -244,7 +346,7 @@ class CodexWorker:
                     raise ValueError("응답 크기 제한 초과")
                 safe = redact(output.read_text(encoding="utf-8"))
                 output.write_text(safe, encoding="utf-8")
-                report = render_report(json.loads(safe))
+                report = render_report(json.loads(safe), time.monotonic() - started)
                 (run_dir / "report.md").write_text(report, encoding="utf-8")
         except Exception as exc:
             result["completed"] = False

@@ -4,3 +4,9 @@ __pycache__/
 data/
 test-results/
 .pytest_cache/
+node_modules/
+static/voice/vendor/
+static/voice/models/
+static/voice/fixtures/
+.npm-cache/
+static/voice/assets-status.json
