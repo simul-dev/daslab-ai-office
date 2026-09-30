@@ -1,4 +1,5 @@
 import http.client
+import hashlib
 import json
 import tempfile
 import unittest
@@ -58,6 +59,47 @@ class DevelopmentTests(unittest.TestCase):
         self.dev.prepare(next_folder, self.folder)
         self.assertIn('navy', (next_folder / 'workspace/static/office.css').read_text())
         self.assertFalse(self.dev.finish(next_folder)['ready'])
+
+    def test_allow_unchanged_inherits_verified_artifacts_and_original_live_baseline(self):
+        original_live = (self.root / 'static/office.css').read_bytes()
+        original_baseline = json.loads((self.folder / 'development-baseline.json').read_text(encoding='utf-8'))['live_files']
+        self.change()
+        verified = self.dev.finish(self.folder)
+        self.assertTrue(verified['ready'], verified)
+        expected_css = (self.folder / 'workspace/static/office.css').read_bytes()
+        # Later live edits must not silently replace the original conflict baseline.
+        (self.root / 'static/office.css').write_text('body { color: red; }', encoding='utf-8')
+        previous = self.folder
+        for name in ('unchanged-review', 'unchanged-recheck'):
+            with self.subTest(workspace=name):
+                folder = self.root / 'data/runs' / name
+                self.dev.prepare(folder, previous, allow_unchanged=True)
+                result = self.dev.finish(folder)
+                self.assertTrue(result['ready'], result)
+                self.assertEqual(result['changed_files'], [])
+                self.assertEqual(result['artifacts'], verified['artifacts'])
+                files, baseline = self.dev.delivery_files(folder, verified['artifacts'])
+                self.assertEqual(files['office.css'], expected_css)
+                self.assertEqual(baseline, original_baseline)
+                self.assertEqual(baseline['office.css'], hashlib.sha256(original_live).hexdigest())
+                self.assertNotEqual(baseline['office.css'], hashlib.sha256(files['office.css']).hexdigest())
+                self.assertFalse(result['visual_verified'])
+                self.assertFalse(result['applied_to_live'])
+                previous = folder
+
+    def test_allow_unchanged_cannot_make_new_workspace_ready_without_real_change(self):
+        folder = self.root / 'data/runs/new-without-source'
+        self.dev.prepare(folder, allow_unchanged=True)
+        result = self.dev.finish(folder)
+        self.assertFalse(result['ready'], result)
+        self.assertEqual(result['changed_files'], [])
+        self.assertIn('No actual HTML or style change', result['error'])
+
+    def test_allow_unchanged_rejects_unverified_previous_workspace(self):
+        folder = self.root / 'data/runs/unverified-source'
+        with self.assertRaisesRegex(ValueError, 'Previous workspace has not passed verification'):
+            self.dev.prepare(folder, self.folder, allow_unchanged=True)
+        self.assertFalse((folder / 'workspace/static/office.html').exists())
 
     def test_rejects_missing_ids_remote_scripts_invalid_js(self):
         self.change()

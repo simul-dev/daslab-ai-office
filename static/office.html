@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#f4f5f1">
+  <meta name="theme-color" content="#080d1a">
   <title>DAS Lab · AI 오피스</title>
   <link rel="stylesheet" href="/office.css">
   <script src="/office.js" defer></script>
@@ -12,7 +12,7 @@
 <a class="skip-link" href="#workspace">본문으로 이동</a>
 <div class="office-shell">
   <aside class="sidebar" aria-label="워크스페이스 메뉴">
-    <a class="brand" href="/" aria-label="DAS Lab AI 오피스 홈"><span class="brand-symbol" aria-hidden="true">D<span>↗</span></span><span>DAS Lab<small>AI OFFICE</small></span></a>
+    <a class="brand" href="/" aria-label="DAS Lab AI 오피스 홈"><img src="/brand/daslab-dark.png" width="170" height="56" alt="DAS Lab"><span class="brand-caption">AI OFFICE <span>조직 운영</span></span></a>
     <div class="workspace-label">WORKSPACE</div>
     <a class="nav-link current" href="#organization"><span aria-hidden="true">◈</span> 조직 운영</a>
     <a class="nav-link" href="#missions"><span aria-hidden="true">▤</span> 미션과 결과</a>
@@ -25,7 +25,7 @@
   <main id="workspace">
     <header class="topbar"><div><span class="breadcrumb">DAS Lab</span><span class="divider">/</span><strong>조직 운영</strong></div><div class="topbar-right"><span id="today" class="today"></span><button id="reconnect" class="connection" type="button" title="연결 상태 확인"><span class="status-dot"></span><span id="connection-label">연결 중</span></button></div></header>
     <div class="page">
-      <section class="page-heading"><div><div class="eyebrow">YOUR COMPANY, IN VIEW</div><h1>우리 팀은 지금.</h1><p>누가 무엇을 맡고, 어디까지 했는지. 필요한 순간에 직접 개입하세요.</p></div><a href="/voice/?office=1" class="button voice-button"><span aria-hidden="true">◉</span> 음성으로 이야기하기</a></section>
+      <section class="page-heading"><div><div class="eyebrow">DAS LAB / ORGANIZATION</div><h1>팀의 업무를 한눈에.</h1><p>조직과 실행 상태를 살펴보고, 다음 업무의 방향을 정하세요.</p></div><a href="/voice/?office=1" class="button voice-button"><span aria-hidden="true">◉</span> 음성으로 이야기하기</a></section>
       <div id="page-error" class="notice error" role="alert" hidden></div>
 
       <section class="command-card" aria-label="직원에게 업무 지시">
@@ -34,7 +34,7 @@
           <textarea id="command-input" rows="2" maxlength="6000" required placeholder="예: 공급망 데모의 개선 우선순위 세 가지를 정리하고, 홍보에 쓸 핵심 메시지도 제안해 줘."></textarea>
           <div class="command-bottom"><label class="recipient-label" for="recipient">받는 직원 <select id="recipient" name="employee_id" aria-label="업무를 받을 직원" disabled><option value="">직원을 불러오는 중</option></select></label><div class="command-submit"><span class="keyboard-hint">Ctrl + Enter</span><button id="command-submit" class="button primary" type="submit" disabled>업무 맡기기 <span aria-hidden="true">↗</span></button></div></div>
           <div id="command-error" class="form-error" role="alert" hidden></div>
-          <p class="small muted">현재 화면: DAS Lab 조직 운영 · 이 화면의 수정 요청은 PM·R&D가 작업본으로 처리합니다.</p>
+          <p class="small muted command-note">선택한 직원에게 요청과 결과가 연결됩니다.</p>
         </form>
       </section>
 
@@ -48,8 +48,8 @@
       <div class="organization-layout">
         <section id="organization" class="panel organization-panel" aria-labelledby="organization-heading">
           <div class="panel-heading"><div><h2 id="organization-heading">조직도 <span id="organization-count" class="count-label">—</span></h2><p>직원을 선택하면 업무와 기억, 결과가 보입니다.</p></div><span class="subtle-tag">DAS Lab</span></div>
-          <div id="organization-tree" class="organization-tree"><div class="loading-state">조직을 연결하고 있습니다.</div></div>
-          <div class="organization-footer"><span><i class="status-dot"></i> 실제 실행 상태 반영</span><span>직원 정체성과 실행 세션을 별도로 보존</span></div>
+          <div id="organization-tree" class="organization-tree" tabindex="0" role="region" aria-label="직원 조직도"><div class="loading-state">조직을 연결하고 있습니다.</div></div>
+          <div class="organization-footer"><span><i class="status-dot"></i> 실제 실행 상태 반영</span><span>직원 선택 → 업무 · 기억 · 성과</span></div>
         </section>
         <section class="panel inspector" aria-labelledby="employee-name">
           <div class="inspector-heading"><span class="eyebrow">TEAM MEMBER</span><span id="employee-state" class="badge neutral">확인 중</span></div>

@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -19,9 +20,12 @@ from .providers import CodeReviewer
 from .store import Conflict
 from .worker import CodexWorker
 from .development import DevelopmentWorkspace
+from .delivery import GitDelivery, DeliveryError
+from .management import PMWorkflow
 
 
-LABELS = {"queued": "실행 대기", "running": "작업 중", "pausing": "실행 중지 중",
+LABELS = {"queued": "실행 대기", "running": "작업 중", "pausing": "실행 중지 중", "delivered": "반영 처리 완료",
+          "waiting": "직원 작업 기다리는 중", "accepted": "PM 검수 완료",
           "paused": "일시 정지", "cancelled": "취소됨", "completed": "검증 완료",
           "review": "보고 준비", "blocked": "진행 막힘", "failed": "실행 실패", "deferred": "연결·한도 대기"}
 STAFF = [
@@ -101,6 +105,8 @@ class OrganizationEngine:
         policy_path = self.root / "config/development.json"
         self.development_policy = json.loads(policy_path.read_text(encoding="utf-8")) if policy_path.is_file() else {}
         self.development = DevelopmentWorkspace(self.root, self.data_dir)
+        self.git_delivery = GitDelivery(self.root)
+        self.management = PMWorkflow(self)
         for filename in ("knowledge/company-charter.md", "knowledge/daslab-team.md"):
             path = self.root / filename
             if path.is_file():
@@ -160,7 +166,11 @@ class OrganizationEngine:
     def _recover(self):
         with self.lock:
             for mission in self._all("missions"):
-                if mission["status"] not in ("running", "pausing", "queued"):
+                if (mission["status"] == "review" and ((mission.get("result") or {}).get("outcome") or {}).get("status") == "blocked"):
+                    mission.update(status="blocked", updated_at=_now())
+                    self._save("missions", mission)
+                    self._event("mission.blocked", "기존 보고의 막힘 상태와 미완료 사유를 복원했습니다.", mission["employee_id"], mission["id"])
+                if mission["status"] not in ("running", "pausing", "queued", "waiting"):
                     continue
                 was_cancelled = mission.get("pending_action") == "cancelled"
                 mission.update(status="cancelled" if was_cancelled else "paused", updated_at=_now(), pending_action=None,
@@ -214,16 +224,96 @@ class OrganizationEngine:
         ui_change = any(word in value for word in ("화면", "ui", "버튼", "대시보드", "홈페이지")) and any(word in value for word in ("수정", "고쳐", "개선", "변경", "바꿔", "적용"))
         return design or ui_change
 
+    @staticmethod
+    def _delivery_operation(text):
+        """Recognize an explicit handoff request, not advice or a design task."""
+        value = text.lower()
+        if any(word in value for word in ("하지", "말고", "말아", "금지", "제외", "않", "보류", "방법", "설명", "계획", "검토", "가능", "don't", "do not", "without", "how to")):
+            return None
+        if any(word in value for word in ("개선해", "수정해", "고쳐", "바꿔", "만들어", "개선하고", "수정하고", "디자인해")):
+            return None
+        if not any(word in value for word in ("해", "줘", "하자")) and not re.match(r"\s*(please\s+)?(apply|commit|push)\b", value):
+            return None
+        for operation, words in (("push", ("푸시", "푸쉬", "push")), ("commit", ("커밋", "commit")), ("apply", ("반영", "적용", "apply"))):
+            if any(word in value for word in words):
+                return operation
+        return None
+
     def _require_developer(self, employee_id):
         if (not self.development_policy.get("enabled") or self.development_policy.get("project_id") != "office-ui"
                 or employee_id not in self.development_policy.get("allowed_employee_ids", [])):
             raise PermissionError("이 조직 화면의 개발 실행 권한은 PM·R&D에 위임되어 있습니다.")
 
+    def _validated_development_source(self, attempt_id):
+        if (not isinstance(attempt_id, str) or len(attempt_id) != 32
+                or any(char not in "0123456789abcdef" for char in attempt_id)):
+            raise ValueError("이어 작업할 미리보기 실행을 선택하세요.")
+        try:
+            attempt = self._get("attempts", attempt_id)
+            mission = self._get("missions", attempt["mission_id"])
+        except KeyError:
+            raise ValueError("선택한 미리보기 실행을 찾을 수 없습니다.") from None
+        delivery = attempt.get("delivery") or {}
+        if (attempt.get("execution_mode") not in ("development", "preview_import") or not delivery.get("ready")
+                or (mission.get("project_context") or {}).get("project_id") != "office-ui"
+                or not isinstance(delivery.get("artifacts"), dict) or not delivery["artifacts"]):
+            raise ValueError("검사를 통과한 조직 UI 미리보기만 이어 작업할 수 있습니다.")
+        folder = self.data_dir / "organization-runs" / attempt_id
+        checked = self.development.finish(folder)
+        if not checked.get("ready") or checked.get("artifacts") != delivery["artifacts"]:
+            raise ValueError("미리보기 파일이 검증된 원본과 달라졌습니다. 변경된 작업본은 이어 실행하지 않습니다.")
+        return {"attempt_id": attempt_id, "mission_id": mission["id"], "project_id": "office-ui",
+                "artifacts": dict(delivery["artifacts"])}
+
+    def _development_source(self, payload, text, context):
+        explicit = payload.get("source_attempt_id")
+        if explicit is not None:
+            if not context or context.get("project_id") != "office-ui":
+                raise ValueError("미리보기 후속 작업에는 조직 UI 작업 대상이 필요합니다.")
+            return self._validated_development_source(explicit)
+        # A request to create a preview must not inherit an unrelated design.
+        continuation = any(word in text for word in ("수정된", "개선된", "이전", "방금", "그거"))
+        continuation |= (any(word in text for word in ("미리보기", "프리뷰"))
+                         and any(word in text.lower() for word in ("반영", "적용", "커밋", "푸시", "푸쉬", "commit", "push", "이어서")))
+        if not continuation or not context or context.get("project_id") != "office-ui":
+            return None
+        candidates = []
+        for mission in self._all("missions"):
+            if mission.get("parent_mission_id"):
+                continue
+            if (mission.get("project_context") or {}).get("project_id") != "office-ui":
+                continue
+            if mission.get("workflow"):
+                if mission.get("source_attempt_id"):
+                    candidates.append(mission["source_attempt_id"])
+                continue
+            latest = next((attempt for attempt in reversed(self._attempts(mission["id"]))
+                           if (attempt.get("delivery") or {}).get("ready")), None)
+            if latest is not None:
+                candidates.append(latest["id"])
+        candidates = list(dict.fromkeys(candidates))
+        if len(candidates) > 1:
+            raise ValueError("이어 작업할 미리보기가 여러 개입니다. 사용할 미리보기를 선택하세요.")
+        if not candidates:
+            raise ValueError("이어 작업할 검증된 미리보기가 없습니다. 먼저 디자인 작업본을 만들거나 기존 미리보기를 선택하세요.")
+        return self._validated_development_source(candidates[0])
+
     def submit(self, payload):
         text, request_id = _text(payload), _text(payload, "request_id", 160)
         requested = payload.get("employee_id") or "assistant"
         context = self._project_context(payload)
-        mode = "development" if self._is_development(text, context) else "analysis"
+        operation = payload.get("delivery_operation")
+        if operation is not None and operation not in ("apply", "commit", "push"):
+            raise ValueError("반영·커밋·푸시 중 처리할 작업을 선택하세요.")
+        operation = operation or (self._delivery_operation(text) if context else None)
+        mode = "development" if self._is_development(text, context) or payload.get("source_attempt_id") is not None else "analysis"
+        if operation:
+            mode = "delivery"
+        managed = self.management.wants(payload, mode, requested)
+        if managed:
+            operation = self.management.requested_operation(text)
+            if mode == "delivery" and not operation:
+                mode = "development"
         with self.changed, self.db:
             if self.closed:
                 raise Conflict("서비스가 종료 중입니다.")
@@ -233,12 +323,27 @@ class OrganizationEngine:
                 mission = json.loads(existing[0])
                 if mission["text"] != text or mission["requested_employee_id"] != requested or mission.get("project_context") != context:
                     raise Conflict("이미 사용한 요청 ID의 내용을 바꿀 수 없습니다.")
+                if payload.get("source_attempt_id") is not None and mission.get("requested_source_attempt_id", mission.get("source_attempt_id")) != payload["source_attempt_id"]:
+                    raise Conflict("이미 사용한 요청 ID의 원본 미리보기를 바꿀 수 없습니다.")
+                if mission.get("delivery_operation") != operation:
+                    raise Conflict("이미 사용한 요청 ID의 반영 작업을 바꿀 수 없습니다.")
                 return {"mission": self._mission_view(mission), "duplicate": True, "revision": self._revision}
             employee_id, routing = self._route(text, requested)
-            if mode == "development":
+            source = None
+            if mode in ("development", "delivery"):
                 employee_id = "das-rd" if requested == "assistant" else requested
+                if mode == "delivery" and requested == "assistant":
+                    employee_id = "das-pm"
                 self._require_developer(employee_id)
+                source = self._development_source(payload, "이 미리보기 " + text if mode == "delivery" else text, context)
                 routing = "대표가 위임한 조직 UI 개발입니다. 지정 직원이 작업본을 수정하고 DAS Lab PM이 성과 책임을 집니다."
+                if mode == "delivery":
+                    policy = self.development_policy.get("delivery", {})
+                    if not policy.get("enabled") or operation not in policy.get("allowed_operations", []):
+                        raise PermissionError("이 프로젝트의 반영·Git 처리 권한이 설정되지 않았습니다.")
+                    if not source:
+                        raise ValueError("반영할 검증된 미리보기를 먼저 선택하세요.")
+                    routing = "선택한 미리보기를 그대로 반영합니다. DAS Lab PM 책임 아래 서버가 Git 처리 결과를 확인합니다."
             brief = mission_brief({"mission": text, "project_id": "daslab"}, [{"id": "daslab"}])
             stamp = _now()
             mission = {"id": _id(), "request_id": request_id, "text": text, "title": brief["title"],
@@ -248,9 +353,21 @@ class OrganizationEngine:
                        "acceptance_criteria": brief["acceptance_criteria"], "instructions": [], "intervention_count": 0,
                        "pending_action": None, "error": None, "result": None, "verification": "not_verified",
                        "execution_mode": mode, "project_context": context}
+            if operation:
+                mission["delivery_operation"] = operation
+            if source:
+                mission.update(source_attempt_id=source["attempt_id"], source_provenance=source,
+                               requested_source_attempt_id=source["attempt_id"])
+            if managed:
+                self._require_developer("das-pm")
+                if operation:
+                    policy = self.development_policy.get("delivery", {})
+                    if not policy.get("enabled") or operation not in policy.get("allowed_operations", []):
+                        raise PermissionError("요청한 반영 권한이 설정되지 않았습니다.")
+                self.management.initialize(mission)
             self._save("missions", mission)
             self._event("mission.assigned", f"업무 배정: {mission['title']}", employee_id, mission["id"])
-            if self._quota_blocked:
+            if self._quota_blocked and mode != "delivery":
                 self._defer(mission, "구독 사용량 한도로 실행을 보류했습니다. 한도 확인 후 직접 재개하세요.")
             return {"mission": self._mission_view(mission), "duplicate": False, "revision": self._revision}
 
@@ -263,6 +380,12 @@ class OrganizationEngine:
             if self.closed:
                 raise Conflict("서비스가 종료 중입니다.")
             mission = self._get("missions", mission_id)
+            if mission.get("parent_mission_id"):
+                raise Conflict("PM의 전체 업무에서 지시·정지·재개해 주세요.")
+            if mission.get("workflow"):
+                return self.management.action(mission, action, payload)
+            if mission.get("execution_mode") == "delivery" and mission["status"] == "running":
+                raise Conflict("파일 반영·Git 처리 중입니다. 현재 단계가 끝난 뒤 상태를 확인하세요.")
             state = mission["status"]
             is_active = self._active is not None and self._active["mission_id"] == mission_id
             if state == "cancelled":
@@ -274,7 +397,7 @@ class OrganizationEngine:
                     raise Conflict("실행이 멈춘 미션만 새 실행으로 재개할 수 있습니다.")
                 if len(self._attempts(mission_id)) >= self.config["max_attempts"]:
                     raise Conflict("미션별 실행 횟수 제한에 도달했습니다.")
-                if mission.get("execution_mode") == "development":
+                if mission.get("execution_mode") in ("development", "delivery"):
                     self._require_developer(mission["employee_id"])
                 mission.update(status="queued", error=None, ended_at=None, pending_action=None)
                 self._set_quota_blocked(False)
@@ -346,7 +469,7 @@ class OrganizationEngine:
         midnight = datetime.now(timezone(timedelta(hours=9))).replace(hour=0, minute=0, second=0, microsecond=0)
         start = midnight.astimezone(timezone.utc).isoformat()
         end = (midnight + timedelta(days=1)).astimezone(timezone.utc).isoformat()
-        count = self.db.execute("SELECT COUNT(*) FROM attempts WHERE started_at>=? AND started_at<?", (start, end)).fetchone()[0]
+        count = self.db.execute("SELECT COUNT(*) FROM attempts WHERE started_at>=? AND started_at<? AND COALESCE(json_extract(data,'$.execution_mode'),'analysis') NOT IN ('delivery','browser_check','preview_import')", (start, end)).fetchone()[0]
         old = self.data_dir / "office.sqlite3"
         if old.is_file():
             try:
@@ -362,6 +485,8 @@ class OrganizationEngine:
 
     def _mission_view(self, mission):
         attempts = self._attempts(mission["id"])
+        for child_id in (mission.get("workflow") or {}).get("child_ids", []):
+            attempts += self._attempts(child_id)
         result = mission.get("result") or {}
         outcome = result.get("outcome") or {}
         elapsed = sum(_elapsed(a) for a in attempts)
@@ -374,9 +499,12 @@ class OrganizationEngine:
                     progress_percent=outcome.get("progress_percent"), progress_basis=outcome.get("basis"),
                     report=result.get("report", []), accomplishments=result.get("accomplishments", []),
                     remaining=result.get("remaining", []), limitations=result.get("limitations", []))
-        if (mission.get("delivery") or {}).get("ready"):
+        view["preview_available"] = bool((mission.get("delivery") or {}).get("ready"))
+        if view["preview_available"] and mission["status"] == "review" and not mission.get("workflow") and mission.get("execution_mode") != "preview_import":
+            applied = (mission.get("release") or {}).get("applied_to_live")
             view.update(status_label="미리보기 준비", progress_percent=None,
-                        summary="조직 운영 화면의 디자인 작업본을 수정하고 정적 검사를 통과했습니다. 미리보기를 열 수 있습니다. 운영 화면에는 아직 적용하지 않았습니다.")
+                        summary="조직 운영 화면의 디자인 작업본을 수정하고 정적 검사를 통과했습니다. 미리보기를 열 수 있습니다. "
+                        + ("운영 화면 반영 기록이 있습니다. 화면·동작 검수는 별도입니다." if applied else "운영 화면에는 아직 적용하지 않았습니다."))
         return view
 
     def detail(self, mission_id):
@@ -385,7 +513,8 @@ class OrganizationEngine:
             attempts = [{k: v for k, v in a.items() if k not in ("run_dir", "execution", "report")}
                         for a in self._attempts(mission_id)]
             events = [json.loads(row[0]) for row in self.db.execute("SELECT data FROM events WHERE json_extract(data,'$.mission_id')=? ORDER BY id DESC LIMIT 200", (mission_id,))]
-            return {"revision": self._revision, "mission": self._mission_view(mission), "attempts": attempts, "events": events}
+            children = [self._mission_view(self._get("missions", cid)) for cid in (mission.get("workflow") or {}).get("child_ids", [])]
+            return {"revision": self._revision, "mission": self._mission_view(mission), "attempts": attempts, "events": events, "children": children}
 
     def snapshot(self):
         with self.lock:
@@ -394,8 +523,8 @@ class OrganizationEngine:
             events = [json.loads(row[0]) for row in self.db.execute("SELECT data FROM events ORDER BY id DESC LIMIT 80")]
             employees = self._all("employees")
             attempts = self._all("attempts")
-            active_states = {"queued", "running", "pausing"}
-            status_order = {state: i for i, state in enumerate(("running", "pausing", "queued", "blocked", "failed", "deferred", "paused", "review"))}
+            active_states = {"queued", "running", "pausing", "waiting"}
+            status_order = {state: i for i, state in enumerate(("running", "pausing", "queued", "waiting", "blocked", "failed", "deferred", "paused", "review"))}
             for employee in employees:
                 employee["capabilities"] = (["조직 UI 작업본 수정", "정적 검사", "로컬 미리보기"]
                                             if self.development_policy.get("enabled") and employee["id"] in self.development_policy.get("allowed_employee_ids", [])
@@ -433,12 +562,13 @@ class OrganizationEngine:
                                   "quota_blocked": self._quota_blocked,
                                   "connection": dict(self.connection), "capabilities": ["제공 자료 분석", "문서 작성", "코드 제안"],
                                   "development_enabled": bool(self.development_policy.get("enabled")),
+                                  "managed_pm_enabled": bool(self.management.policy.get("enabled")),
                                   "development_scope": self.development_policy.get("scope"),
                                   "paid_fallback": False, "recurring_enabled": False, "temporary_agents_enabled": False},
                     "metrics": {"employees": len(employees) - 1, "active": active, "queued": queued,
                                 "reports": sum(bool(a.get("summary")) for a in attempts), "verified_outcomes": 0,
                                 "interventions": sum(m["intervention_count"] for m in missions),
-                                "execution_seconds": round(sum(m["elapsed_seconds"] for m in missions), 1),
+                                "execution_seconds": round(sum(_elapsed(a) for a in attempts), 1),
                                 "execution_time_unknown": any(m["elapsed_unknown"] for m in missions),
                                 "attention": sum(m["status"] in ("blocked", "failed", "deferred") for m in missions)}}
 
@@ -485,6 +615,17 @@ class OrganizationEngine:
                             self._active["cancel"].set()
                             self._active = None
                         self._event("execution.failed", mission["error"], mission["employee_id"], mission_id)
+                finally:
+                    with self.changed, self.db:
+                        try:
+                            self.management.child_finished(mission_id)
+                        except Exception as exc:
+                            child = self._get("missions", mission_id)
+                            if child.get("parent_mission_id"):
+                                parent = self._get("missions", child["parent_mission_id"])
+                                self.management.block(parent, "담당 직원의 결과를 연결하지 못했습니다: " + str(exc)[:1000])
+                            else:
+                                self._event("pm.handoff_failed", "후속 결과 연결에 실패했습니다.", child["employee_id"], mission_id)
         finally:
             with self.lock:
                 if self.closed:
@@ -499,7 +640,111 @@ class OrganizationEngine:
         self._quota_blocked = blocked
         self.db.execute("INSERT INTO settings(key,value) VALUES('quota_blocked',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("1" if blocked else "0",))
 
+    def _run_delivery(self, mission_id):
+        """Execute an owner's bounded handoff without asking the model to rewrite it."""
+        with self.changed, self.db:
+            mission = self._get("missions", mission_id)
+            if self.closed or mission["status"] != "queued":
+                return
+            stamp, attempt_id = _now(), _id()
+            attempt = {"id": attempt_id, "mission_id": mission_id, "employee_id": mission["employee_id"],
+                       "number": len(self._attempts(mission_id)) + 1, "status": "running", "started_at": stamp,
+                       "ended_at": None, "duration_seconds": 0, "error": None, "summary": None,
+                       "execution_mode": "delivery", "source_attempt_id": mission["source_attempt_id"]}
+            mission.update(status="running", started_at=mission.get("started_at") or stamp, ended_at=None, error=None)
+            self._active = {"mission_id": mission_id, "attempt_id": attempt_id,
+                            "employee_id": mission["employee_id"], "cancel": threading.Event()}
+            self._save("missions", mission)
+            self._save("attempts", attempt)
+            self._event("delivery.started", "선택한 미리보기의 반영·Git 처리를 시작했습니다.", mission["employee_id"], mission_id)
+
+        def progress(receipt):
+            # Persist a commit identity before network I/O so retries cannot
+            # mistake unrelated repository history for our own work.
+            with self.changed, self.db:
+                current = self._get("missions", mission_id)
+                current.update(release=dict(receipt), updated_at=_now())
+                self._save("missions", current)
+                self._event("delivery.progress", "반영 처리 기록: " + str(receipt.get("stage", "확인 중")), mission["employee_id"], mission_id)
+
+        receipt, error = dict(mission.get("release") or {}), None
+        try:
+            self._require_developer(mission["employee_id"])
+            policy = self.development_policy.get("delivery", {})
+            if not policy.get("enabled") or mission["delivery_operation"] not in policy.get("allowed_operations", []):
+                raise PermissionError("이 프로젝트의 반영·Git 처리 권한이 비활성화되었습니다.")
+            if mission["delivery_operation"] == "push" and not policy.get("remote_url"):
+                raise ValueError("푸시할 원격 저장소를 프로젝트 설정에서 지정해야 합니다.")
+            with self.lock:
+                source = self._validated_development_source(mission["source_attempt_id"])
+                if mission.get("parent_mission_id"):
+                    parent = self._get("missions", mission["parent_mission_id"])
+                    checked = parent["workflow"].get("browser_verification") or {}
+                    if (parent["status"] != "waiting" or parent.get("delivery_operation") != mission["delivery_operation"]
+                            or parent["workflow"].get("accepted_source") != source or checked.get("status") != "passed"
+                            or checked.get("artifacts") != source["artifacts"]
+                            or mission.get("required_browser_artifacts") != source["artifacts"]):
+                        raise ValueError("PM 검수 또는 대표의 반영 지시가 현재 작업본과 일치하지 않습니다.")
+            if source != mission.get("source_provenance"):
+                raise ValueError("접수한 미리보기 원본과 현재 기록이 다릅니다.")
+            folder = self.data_dir / "organization-runs" / source["attempt_id"]
+            files, baseline = self.development.delivery_files(folder, source["artifacts"])
+            if not receipt:
+                with self.lock:
+                    original = self._get("missions", source["mission_id"])
+                    if original.get("release_source_attempt_id") == source["attempt_id"]:
+                        receipt = dict(original.get("release") or {})
+            receipt = self.git_delivery.deliver(files=files, baseline=baseline, operation=mission["delivery_operation"],
+                                                message="Apply reviewed office UI " + source["attempt_id"][:12],
+                                                expected_remote_url=policy.get("remote_url") if mission["delivery_operation"] == "push" else None, previous=receipt or None,
+                                                on_progress=progress)
+        except DeliveryError as exc:
+            receipt, error = exc.receipt, str(exc)
+        except Exception as exc:
+            error = str(exc) if isinstance(exc, (ValueError, PermissionError)) else "반영 처리를 마치지 못했습니다 (" + type(exc).__name__ + ")."
+        with self.changed, self.db:
+            current = self._get("missions", mission_id)
+            stamp = _now()
+            if error:
+                summary = "반영 처리 중 막혔습니다: " + error
+                status = "blocked"
+            else:
+                summary = {"apply": "선택한 미리보기를 운영 화면에 반영했습니다.",
+                           "commit": "선택한 미리보기를 운영 화면에 반영하고 커밋을 확인했습니다.",
+                           "push": "선택한 미리보기를 운영 화면에 반영하고 커밋·원격 푸시를 확인했습니다."}[mission["delivery_operation"]]
+                if mission["delivery_operation"] == "commit" and not receipt.get("commit"):
+                    summary = "선택한 미리보기와 운영 파일이 같아 추가 커밋할 변경이 없습니다."
+                if receipt.get("already_synced"):
+                    summary = "선택한 개선본이 이미 운영 화면에 반영되어 있고 원격 저장소에도 같은 커밋으로 저장된 것을 확인했습니다. 새 커밋이나 푸시는 만들지 않았습니다."
+                status = "delivered"
+            current.update(status=status, release=receipt, error=error, updated_at=stamp, ended_at=stamp,
+                           pending_action=None, verification="delivery_receipt",
+                           result={"summary": summary, "report": [], "accomplishments": [summary] if not error else [],
+                                   "remaining": [error] if error else [], "limitations": ["브라우저 시각 검수는 별도입니다."]})
+            attempt.update(status="blocked" if error else "completed", ended_at=stamp,
+                           duration_seconds=round(_seconds(attempt["started_at"], stamp), 2),
+                           summary=summary, error=error, release=receipt)
+            self._save("attempts", attempt)
+            self._save("missions", current)
+            if receipt.get("applied_to_live"):
+                original = self._get("missions", current["source_provenance"]["mission_id"])
+                original.update(release=receipt, release_source_attempt_id=current["source_attempt_id"], updated_at=stamp)
+                self._save("missions", original)
+            self._active = None
+            self._event("delivery." + status, summary, mission["employee_id"], mission_id)
+
     def _run(self, mission_id):
+        with self.lock:
+            managed = self._get("missions", mission_id).get("execution_mode") == "managed"
+        if managed:
+            return self.management.run(mission_id)
+        with self.lock:
+            if self._get("missions", mission_id).get("execution_mode") == "delivery":
+                is_delivery = True
+            else:
+                is_delivery = False
+        if is_delivery:
+            return self._run_delivery(mission_id)
         try:
             probe = ({"available": False, "message": "API 키 환경변수가 감지되어 구독 전용 실행을 중지했습니다. 키가 없는 환경에서 서버를 다시 시작하세요."}
                      if self._api_environment_present() else self.worker.probe())
@@ -550,12 +795,27 @@ class OrganizationEngine:
             context = {"employee": employee, "manager": self._get("employees", "das-pm"),
                        "mission": {k: v for k, v in mission.items() if k not in ("request_id", "pending_action")},
                        "memories": self._memories(employee["id"], 20), "project_knowledge": self._knowledge}
+            if mission.get("parent_mission_id"):
+                parent = self._get("missions", mission["parent_mission_id"])
+                context["owner_goal"] = {"text": parent["text"], "instructions": parent["instructions"],
+                                         "note": "이번 담당 업무는 작업본 수정입니다. 화면 검사·PM 검수·반영·Git은 상위 엔진이 이어서 처리합니다."}
         execution, verification, document, error, delivery = {}, None, None, None, None
         try:
             folder.mkdir(parents=True, exist_ok=False)
             if development:
                 previous = next((a for a in reversed(attempts) if (a.get("delivery") or {}).get("ready")), None)
-                context["development"] = self.development.prepare(folder, Path(previous["run_dir"]) if previous else None)
+                source_id = previous["id"] if previous else mission.get("source_attempt_id")
+                with self.lock:
+                    source = self._validated_development_source(source_id) if source_id else None
+                source_folder = self.data_dir / "organization-runs" / source_id if source else None
+                context["development"] = self.development.prepare(folder, source_folder,
+                                                                  allow_unchanged=bool(mission.get("parent_mission_id")))
+                if source:
+                    baseline = json.loads((folder / "development-baseline.json").read_text(encoding="utf-8"))
+                    if baseline.get("files") != source["artifacts"]:
+                        raise ValueError("원본 미리보기가 복사 중 변경되어 실행을 중지했습니다.")
+                    context["development"]["source_provenance"] = source
+                    attempt["source_provenance"] = source
                 with self.changed, self.db:
                     self._event("development.workspace", "조직 UI 소스와 DAS Lab 브랜드 자료를 분리된 작업 공간에 연결했습니다.", employee["id"], mission_id)
             (folder / "input.json").write_text(_dump(context), encoding="utf-8")
@@ -604,6 +864,8 @@ class OrganizationEngine:
                             raise ValueError(error)
                         self.development.open_preview(folder, self.snapshot, expected_artifacts=delivery["artifacts"])
                         delivery.update(attempt_id=attempt_id, preview_url=f"/previews/{attempt_id}/", browser_verified=False)
+                        if attempt.get("source_provenance"):
+                            delivery["source_provenance"] = attempt["source_provenance"]
                 else:
                     error = execution.get("error") or "보고서 구조·근거 검사에 실패했습니다. 실행 기록을 확인하세요."
                     if self._quota_failure(folder):
@@ -626,13 +888,14 @@ class OrganizationEngine:
                 status = "blocked" if document.get("outcome", {}).get("status") == "blocked" else "review"
                 current.update(status=status, result=document, verification="structural_only", error=None)
                 if delivery:
-                    current.update(delivery=delivery, status="review")
+                    current.update(delivery=delivery)
                 memory = {"id": _id(), "employee_id": attempt["employee_id"], "text": str(document.get("summary", ""))[:4000],
                           "source": "mission:" + mission_id, "created_at": stamp, "verification": "ai_unverified"}
                 self._save("memories", memory)
                 message = "보고서 준비 완료. 구조 검사는 통과했으며 내용·사업 성과는 아직 독립 검증되지 않았습니다."
                 if delivery:
-                    message = "실제 UI 파일 수정과 정적 검사를 마쳤습니다. 디자인 미리보기를 열 수 있습니다. 브라우저 시각 검증은 별도입니다."
+                    message = ("미리보기는 준비됐지만 요청한 목표는 막혀 있습니다. 보고서의 남은 일과 사유를 확인하세요."
+                               if status == "blocked" else "실제 UI 파일 수정과 정적 검사를 마쳤습니다. 디자인 미리보기를 열 수 있습니다. 브라우저 시각 검증은 별도입니다.")
             else:
                 quota = any(word in str(error).lower() for word in ("quota", "rate limit", "usage limit", "한도", "사용량"))
                 status = "deferred" if quota else "failed"

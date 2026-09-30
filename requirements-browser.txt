@@ -1,0 +1,2 @@
+# Optional app-owned read-only preview verification. Uses installed Edge/Chrome.
+playwright==1.63.0

@@ -101,7 +101,7 @@ class DevelopmentWorkspace:
                 raise ValueError('Missing required file: ' + name)
         return result
 
-    def prepare(self, folder, previous_folder=None):
+    def prepare(self, folder, previous_folder=None, allow_unchanged=False):
         folder = self._folder(folder)
         workspace = _safe(folder / 'workspace', folder)
         if workspace.exists():
@@ -134,9 +134,27 @@ class DevelopmentWorkspace:
         brand_context = _safe(self.root / 'knowledge/office-brand.md', self.root)
         if brand_context.is_file():
             (workspace / 'BRAND.md').write_text(brand_context.read_text(encoding='utf-8'), encoding='utf-8')
-        manifest = {'files': {name: _hash(data) for name, data in files.items()}, 'html': files['office.html'].decode('utf-8')}
+        # Keep the live baseline separate from an inherited preview. Delivery must
+        # detect edits to the live files made after the original preview started.
+        if previous_folder is not None:
+            previous_baseline = json.loads((previous_folder / 'development-baseline.json').read_text(encoding='utf-8'))
+            live_files = previous_baseline.get('live_files', previous_baseline['files'])
+        else:
+            live_files = {name: _hash(data) for name, data in files.items()}
+        manifest = {'files': {name: _hash(data) for name, data in files.items()},
+                    'live_files': live_files, 'html': files['office.html'].decode('utf-8'),
+                    'allow_unchanged': bool(allow_unchanged and previous_folder is not None)}
         (folder / 'development-baseline.json').write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
         return {'workspace': str(workspace), 'static_dir': str(workspace / 'static'), 'files': list(files), 'target': 'DAS Lab internal organization operations UI', 'preview_read_only': True}
+
+    def delivery_files(self, folder, expected_artifacts):
+        """Return only the pinned preview and its original live-file baseline."""
+        folder = self._folder(folder)
+        result = self.finish(folder)
+        if not result['ready'] or result['artifacts'] != expected_artifacts:
+            raise ValueError('미리보기 파일이 검증 후 변경되었습니다. 다시 검수한 작업본을 선택하세요.')
+        baseline = json.loads(_safe(folder / 'development-baseline.json', folder).read_text(encoding='utf-8'))
+        return self._files(folder / 'workspace/static'), baseline.get('live_files', baseline['files'])
 
     def finish(self, folder):
         checks, changed = [], []
@@ -162,9 +180,9 @@ class DevelopmentWorkspace:
             hashes = {name: _hash(data) for name, data in files.items()}
             changed = sorted(name for name, digest in hashes.items() if baseline['files'].get(name) != digest)
             changed += sorted(set(baseline['files']) - set(hashes))
-            if not set(changed) & {'office.html', 'office.css'}:
+            if not set(changed) & {'office.html', 'office.css'} and not baseline.get('allow_unchanged'):
                 raise ValueError('No actual HTML or style change was produced')
-            checks.append('Actual HTML/style changes detected; asset scope checked')
+            checks.append('Inherited verified workspace checked' if not changed else 'Actual file changes detected; asset scope checked')
             return {'ready': True, 'changed_files': changed, 'checks': checks, 'artifacts': hashes, 'visual_verified': False, 'applied_to_live': False}
         except (ValueError, OSError, UnicodeError, KeyError, subprocess.SubprocessError) as exc:
             return {'ready': False, 'changed_files': changed, 'checks': checks, 'error': str(exc), 'visual_verified': False, 'applied_to_live': False}
@@ -173,7 +191,9 @@ class DevelopmentWorkspace:
         with self.lock:
             folder = self._folder(folder)
             key = str(folder)
-            if key in self.servers:
+            if key in self.servers and expected_artifacts is None:
+                # A public preview stays frozen. A verification caller must
+                # supply pins, which are checked against both source and cache.
                 return self.servers[key][2]
             result = self.finish(folder)
             if not result['ready']:
@@ -181,8 +201,12 @@ class DevelopmentWorkspace:
             files = self._files(folder / 'workspace/static')
             if expected_artifacts is not None and {name: _hash(data) for name, data in files.items()} != expected_artifacts:
                 raise ValueError('Preview files no longer match the verified delivery')
+            if key in self.servers:
+                if self.servers[key][4] != result['artifacts']:
+                    raise ValueError('Cached preview no longer matches the pinned source')
+                return self.servers[key][2]
             html = files['office.html'].decode('utf-8')
-            banner = '<div role="status" id="development-preview-banner">디자인 미리보기 · 실제 조직 데이터 · 읽기 전용 · 운영 화면에 아직 적용하지 않음</div>'
+            banner = '<div role="status" id="development-preview-banner">디자인 미리보기 · 실제 조직 데이터 · 읽기 전용 · 반영 여부는 업무 기록에서 확인</div>'
             html = re.sub(r'(<body\b[^>]*>)', lambda m: m[1] + banner, html, count=1, flags=re.I)
             html = re.sub(r'</body\s*>', '<script src="/preview-mode.js"></script></body>', html, count=1, flags=re.I)
             files['office.html'] = html.encode('utf-8')
@@ -236,7 +260,7 @@ class DevelopmentWorkspace:
                                 self.wfile.flush()
                                 if stop.wait(5):
                                     break
-                        except (BrokenPipeError, ConnectionResetError):
+                        except ConnectionError:
                             pass
                         finally:
                             slots.release()
@@ -263,12 +287,12 @@ class DevelopmentWorkspace:
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             url = f'http://127.0.0.1:{server.server_address[1]}/'
-            self.servers[key] = (server, stop, url, thread)
+            self.servers[key] = (server, stop, url, thread, result['artifacts'])
             return url
 
     def close(self):
         with self.lock:
-            for server, stop, _, thread in self.servers.values():
+            for server, stop, _, thread, _ in self.servers.values():
                 stop.set()
                 server.shutdown()
                 server.server_close()

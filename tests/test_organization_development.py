@@ -22,10 +22,20 @@ class FakeDevWorker(RecordingWorker):
     def execute(self, run_dir, prompt, timeout_seconds, cancel_event, on_event=None, workspace_dir=None):
         self.workspace = workspace_dir
         css = workspace_dir / 'static/office.css'
-        css.write_text(css.read_text(encoding='utf-8') + '\nbody { background: #eaf3fb; }', encoding='utf-8')
+        self.initial_css = css.read_text(encoding='utf-8')
+        css.write_text(self.initial_css + '\nbody { background: #eaf3fb; }', encoding='utf-8')
         if on_event:
             on_event({'type': 'item.completed', 'item': {'type': 'file_change'}})
-        return super().execute(run_dir, prompt, timeout_seconds, cancel_event, on_event)
+        result = super().execute(run_dir, prompt, timeout_seconds, cancel_event, on_event)
+        if getattr(self, 'blocked', False):
+            path = run_dir / 'result.json'
+            document = json.loads(path.read_text(encoding='utf-8'))
+            document.update(summary='미리보기는 준비했지만 운영 반영과 푸시를 수행할 수 없습니다.', remaining=['운영 반영과 푸시'])
+            document['outcome'] = {'status': 'blocked', 'progress_percent': 0, 'basis': '요청한 운영 반영과 푸시가 남았습니다.'}
+            for evidence in document['evidence']:
+                evidence['status'] = 'unmet'
+            path.write_text(json.dumps(document), encoding='utf-8')
+        return result
 
 
 class OrganizationDevelopmentTests(unittest.TestCase):
@@ -42,6 +52,9 @@ class OrganizationDevelopmentTests(unittest.TestCase):
         self.env.start()
         self.worker = FakeDevWorker()
         self.engine = OrganizationEngine(self.root, self.root / 'data', worker=self.worker)
+        # These cover the original direct employee path. PM orchestration has
+        # its own fixtures and explicit decision-capable worker tests.
+        self.engine.development_policy['managed_pm'] = {'enabled': False}
         self.server = None
 
     def tearDown(self):
@@ -127,6 +140,7 @@ class OrganizationDevelopmentTests(unittest.TestCase):
         self.engine.close()
         self.worker = RecordingWorker()
         self.engine = OrganizationEngine(self.root, self.root / 'data', worker=self.worker)
+        self.engine.development_policy['managed_pm'] = {'enabled': False}
         detail = self.until(self.submit(), {'deferred'})
         self.assertEqual(self.worker.calls, [])
         self.assertEqual(detail['attempts'], [])
@@ -186,6 +200,105 @@ class OrganizationDevelopmentTests(unittest.TestCase):
         self.assertEqual(mission['status'], 'paused')
         self.assertNotIn('delivery', mission)
         self.assertIsNone(mission['summary'])
+
+    def follow_up(self, text='수정된 디자인에서 카드 간격을 개선해 줘', request='follow-up', source=None):
+        payload = {'text': text, 'employee_id': 'das-pm', 'request_id': request, 'context': {'project_id': 'office-ui'}}
+        if source is not None:
+            payload['source_attempt_id'] = source
+        return self.engine.submit(payload)['mission']['id']
+
+    def test_blocked_preview_preserves_reason_and_status_after_restart(self):
+        self.worker.blocked = True
+        detail = self.until(self.submit(), {'blocked', 'review', 'failed'})
+        mission = detail['mission']
+        self.assertEqual(mission['status'], 'blocked', detail)
+        self.assertEqual(mission['status_label'], '진행 막힘')
+        self.assertTrue(mission['preview_available'])
+        self.assertTrue(mission['delivery']['ready'])
+        self.assertIn('푸시를 수행할 수 없습니다', mission['summary'])
+        self.assertEqual(mission['progress_percent'], 0)
+        # Reproduce a persisted record from the old engine, which overwrote blocked.
+        with self.engine.changed, self.engine.db:
+            legacy = self.engine._get('missions', mission['id'])
+            legacy['status'] = 'review'
+            self.engine._save('missions', legacy)
+        self.engine.close()
+        self.engine = OrganizationEngine(self.root, self.root / 'data', worker=self.worker)
+        restored = self.engine.detail(mission['id'])['mission']
+        for key in ('status', 'status_label', 'summary', 'progress_percent', 'preview_available'):
+            self.assertEqual(restored[key], mission[key])
+        self.assertEqual(len(self.worker.calls), 1)
+
+    def test_unique_follow_up_inherits_preview_and_records_provenance(self):
+        original = self.until(self.submit(), {'review', 'failed'})
+        source = original['mission']['delivery']['attempt_id']
+        source_css = self.worker.workspace.joinpath('static/office.css').read_text(encoding='utf-8')
+        detail = self.until(self.follow_up(), {'review', 'failed'})
+        self.assertEqual(detail['mission']['status'], 'review', detail)
+        self.assertEqual(self.worker.initial_css, source_css)
+        self.assertEqual(detail['mission']['source_attempt_id'], source)
+        self.assertEqual(detail['mission']['source_provenance']['mission_id'], original['mission']['id'])
+        self.assertEqual(detail['mission']['delivery']['source_provenance']['attempt_id'], source)
+        run = self.root / 'data/organization-runs' / detail['attempts'][-1]['id']
+        context = json.loads((run / 'input.json').read_text(encoding='utf-8'))
+        self.assertEqual(context['development']['source_provenance']['attempt_id'], source)
+        self.assertEqual(context['mission']['source_attempt_id'], source)
+
+    def test_unrelated_design_request_starts_from_live(self):
+        self.until(self.submit(), {'review', 'failed'})
+        detail = self.until(self.follow_up('새로운 화면 디자인을 개선해서 미리보기로 보여 줘'), {'review', 'failed'})
+        self.assertEqual(detail['mission']['status'], 'review', detail)
+        self.assertEqual(self.worker.initial_css, (self.root / 'static/office.css').read_text(encoding='utf-8'))
+        self.assertNotIn('source_attempt_id', detail['mission'])
+
+    def test_ambiguous_follow_up_requires_explicit_source_without_worker_call(self):
+        first = self.until(self.submit(request='first'), {'review', 'failed'})
+        second = self.until(self.submit(request='second'), {'review', 'failed'})
+        self.assertEqual(second['mission']['status'], 'review', second)
+        calls = len(self.worker.calls)
+        with self.assertRaisesRegex(ValueError, '여러 개'):
+            self.follow_up()
+        self.assertEqual(len(self.worker.calls), calls)
+        selected = first['mission']['delivery']['attempt_id']
+        detail = self.until(self.follow_up(source=selected), {'review', 'failed'})
+        self.assertEqual(detail['mission']['status'], 'review', detail)
+        self.assertEqual(detail['mission']['source_attempt_id'], selected)
+
+    def test_mutated_source_is_rejected_before_new_mission_or_worker(self):
+        original = self.until(self.submit(), {'review', 'failed'})
+        source = original['mission']['delivery']['attempt_id']
+        css = self.worker.workspace / 'static/office.css'
+        css.write_text(css.read_text(encoding='utf-8') + '\nbody { color: red; }', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, '원본과 달라'):
+            self.follow_up(source=source)
+        self.assertEqual(len(self.worker.calls), 1)
+        self.assertEqual(len(self.engine.snapshot()['missions']), 1)
+
+    def test_source_is_revalidated_before_workspace_creation(self):
+        original = self.until(self.submit(), {'review', 'failed'})
+        source = original['mission']['delivery']['attempt_id']
+        source_css = self.worker.workspace / 'static/office.css'
+        self.worker.available = False
+        mission_id = self.follow_up(source=source)
+        self.until(mission_id, {'deferred'})
+        source_css.write_text(source_css.read_text(encoding='utf-8') + '\nbody { color: red; }', encoding='utf-8')
+        self.worker.available = True
+        self.engine.action(mission_id, {'action': 'resume'})
+        detail = self.until(mission_id, {'failed', 'review'})
+        self.assertEqual(detail['mission']['status'], 'failed', detail)
+        self.assertEqual(len(self.worker.calls), 1)
+        run = self.root / 'data/organization-runs' / detail['attempts'][-1]['id']
+        self.assertFalse((run / 'workspace').exists())
+
+    def test_source_requires_ready_project_preview_and_developer_rights(self):
+        with self.assertRaisesRegex(ValueError, '찾을 수 없'):
+            self.follow_up(source='a' * 32)
+        original = self.until(self.submit(), {'review', 'failed'})
+        source = original['mission']['delivery']['attempt_id']
+        with self.assertRaises(PermissionError):
+            self.engine.submit({'text': '이어서 진행해', 'employee_id': 'das-mkt', 'request_id': 'no-rights',
+                                'context': {'project_id': 'office-ui'}, 'source_attempt_id': source})
+        self.assertEqual(len(self.worker.calls), 1)
 
 
 if __name__ == '__main__':

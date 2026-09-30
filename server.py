@@ -23,6 +23,43 @@ VOICE_TYPES = {
     ".md": "text/plain; charset=utf-8", ".wav": "audio/wav",
 }
 
+BRAND_TYPES = {
+    ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
+    ".ico": "image/x-icon", ".woff2": "font/woff2",
+}
+
+
+def brand_asset(request_path):
+    """Resolve public brand assets without following links out of the static tree."""
+    try:
+        relative = unquote(request_path[len("/brand/"):], errors="strict")
+        parts = relative.split("/")
+        if any(not part or part.startswith(".") or part.endswith((".", " ")) for part in parts):
+            return None
+        if re.search(r'[\\\x00-\x1f<>:"|?*]', relative):
+            return None
+        project = ROOT.resolve(strict=True)
+        root = project / "static" / "brand"
+        path = root.joinpath(*parts)
+        resolved_root, resolved = root.resolve(strict=True), path.resolve(strict=True)
+        if (not resolved_root.is_relative_to(project) or not resolved.is_relative_to(resolved_root)
+                or resolved.suffix.lower() not in BRAND_TYPES or not resolved.is_file()):
+            return None
+        current = project
+        for part in path.relative_to(project).parts:
+            current = current / part
+            info = current.lstat()
+            # OneDrive cloud placeholders are reparse points too; only redirection
+            # tags are links. Do not reject ordinary cloud-backed brand files.
+            if (stat.S_ISLNK(info.st_mode)
+                    or getattr(info, "st_reparse_tag", 0) in (0xA0000003, 0xA000000C)
+                    or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_HIDDEN):
+                return None
+        return resolved, BRAND_TYPES[resolved.suffix.lower()]
+    except (OSError, UnicodeError, ValueError):
+        return None
+
 
 def voice_asset(request_path):
     """Resolve only public, allowlisted files beneath the local voice app."""
@@ -229,6 +266,13 @@ def handler_for(office, organization=None):
                         self.respond(404, {"error": "찾을 수 없습니다."})
                     else:
                         self.respond_voice_file(*asset)
+                elif not write and path.startswith("/brand/"):
+                    asset = brand_asset(path)
+                    if asset is None:
+                        self.respond(404, {"error": "찾을 수 없습니다."})
+                    else:
+                        asset_path, content_type = asset
+                        self.respond(200, asset_path.read_bytes(), content_type)
                 elif not write and path in ("/", "/index.html", "/legacy", "/styles.css", "/app.js", "/office.css", "/office.js"):
                     name = "office.html" if organization is not None and path in ("/", "/index.html") else "index.html" if path in ("/", "/legacy") else path[1:]
                     mime = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}[Path(name).suffix]
