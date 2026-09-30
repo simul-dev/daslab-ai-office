@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "max_children": 8,
+  "max_decisions": 14,
+  "max_revisions": 2,
+  "prototype_timeout_seconds": 900,
+  "profiles": ["research-deliverable-v1", "supply-network-gis-v1"],
+  "scope": "DAS Lab 공개 조사, 내부 분석·초안, 프로젝트별 격리 공급망 GIS 데모. 외부 게시·연락·설치·배포는 제외."
+}

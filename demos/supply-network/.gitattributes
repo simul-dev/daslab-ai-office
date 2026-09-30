@@ -1,0 +1,8 @@
+# Preserve the exact verified source bytes, including original line endings.
+* text eol=lf
+README.md -text whitespace=cr-at-eol,-blank-at-eof
+index.html -text whitespace=cr-at-eol,-blank-at-eof
+style.css -text whitespace=cr-at-eol,-blank-at-eof
+model.js -text whitespace=cr-at-eol,-blank-at-eof
+app.js -text whitespace=cr-at-eol,-blank-at-eof
+model.test.cjs -text whitespace=cr-at-eol,-blank-at-eof

@@ -10,6 +10,8 @@ import uuid
 from datetime import datetime, timezone
 
 from .development import _hash, _safe
+from .network_checks import NetworkVerifier
+from .prototypes import DEFAULT_PROFILE, NETWORK_PROFILE
 from .providers import CodeReviewer
 from .report_recovery import ARTIFACTS, _pinned_hashes, _read
 
@@ -54,6 +56,53 @@ def _load(engine, mission_id):
     return mission, attempt, folder, pinned, execution_raw, document, review
 
 
+def _identity(engine, mission, folder):
+    identity = engine.prototypes.identity(folder)
+    expected = {"project_id": mission.get("prototype_project_id", "daslab-growth"),
+                "profile": mission.get("prototype_profile", DEFAULT_PROFILE)}
+    if identity != expected:
+        raise ValueError("데모 작업본의 프로젝트·프로필이 배정 기록과 다릅니다.")
+    if identity["profile"] == NETWORK_PROFILE or mission.get("parent_mission_id"):
+        parent_id = mission.get("parent_mission_id")
+        if (not isinstance(parent_id, str) or not re.fullmatch(r"[a-f0-9]{32}", parent_id)
+                or parent_id != identity["project_id"]):
+            raise ValueError("프로젝트 개발 업무의 상위 미션이 일치하지 않습니다.")
+        parent = engine._get("missions", parent_id)
+        flow = parent.get("workflow") or {}
+        if (parent.get("status") not in ("paused", "blocked") or parent.get("pending_action")
+                or flow.get("kind") != "business" or flow.get("profile") != identity["profile"]
+                or mission["id"] not in flow.get("child_ids", [])):
+            raise ValueError("같은 프로젝트의 PM이 멈춘 상태에서만 자식 데모를 재검수할 수 있습니다.")
+    return identity
+
+
+def _source_pin(engine, attempt, folder, identity, source_hashes, baseline_raw):
+    original = attempt.get("prototype") or {}
+    basis = None
+    if original.get("artifacts"):
+        if original["artifacts"] != source_hashes:
+            raise ValueError("기존 데모 검증 이후 작업 파일이 변경됐습니다.")
+        basis = "original_attempt"
+    for name, pin in (("original_repair_snapshot", original),
+                      ("captured_repair_snapshot", attempt.get("prototype_repair_capture") or {})):
+        if not pin.get("repairable"):
+            continue
+        if (pin.get("repairable") is not True or pin.get("ready") is not False
+                or pin.get("attempt_id") != attempt["id"]
+                or {key: pin.get(key) for key in identity} != identity
+                or pin.get("repair_artifacts") != source_hashes
+                or pin.get("repair_baseline_sha256") != _hash(baseline_raw)):
+            raise ValueError("고정된 재작업 자료의 파일·기준 해시 또는 계보가 다릅니다.")
+        snapshot = engine.prototypes.repair_snapshot(folder, **identity,
+                                                     expected_baseline_sha256=pin["repair_baseline_sha256"])
+        if snapshot["repair_artifacts"] != source_hashes:
+            raise ValueError("고정된 재작업 자료가 확인 도중 변경됐습니다.")
+        basis = basis or name
+    if identity["profile"] == NETWORK_PROFILE and basis is None:
+        raise ValueError("프로젝트 데모의 실행 종료 또는 운영자 고정 파일 해시가 필요합니다.")
+    return basis
+
+
 def recover_prototype(engine, mission_id, review_note, require_policy_comparison=True):
     """Recheck a stopped prototype without rewriting reports or resetting runs.
 
@@ -68,11 +117,11 @@ def recover_prototype(engine, mission_id, review_note, require_policy_comparison
         raise ValueError("정책 비교 검사 여부는 명시적인 참·거짓이어야 합니다.")
     with engine.changed, engine.db:
         mission, attempt, folder, report_hashes, execution_raw, document, review = _load(engine, mission_id)
+        identity = _identity(engine, mission, folder)
+        network = identity["profile"] == NETWORK_PROFILE
         source_hashes = {name: _hash(raw) for name, raw in engine.prototypes._files(folder / "workspace").items()}
-        original_pin = (attempt.get("prototype") or {}).get("artifacts")
-        if original_pin and source_hashes != original_pin:
-            raise ValueError("기존 데모 검증 이후 작업 파일이 변경됐습니다.")
         baseline_raw = _read(folder / "prototype-baseline.json", folder, 1_000_000)
+        pin_basis = _source_pin(engine, attempt, folder, identity, source_hashes, baseline_raw)
         prior = attempt.get("prototype_reverification")
         if prior and (not isinstance(prior, dict) or prior.get("source_artifacts") != source_hashes
                       or prior.get("execution_sha256") != _hash(execution_raw)
@@ -83,24 +132,30 @@ def recover_prototype(engine, mission_id, review_note, require_policy_comparison
         target = _safe(folder / "prototype-rechecks" / recheck_id, folder)
         target.mkdir(parents=True, exist_ok=False)
         provenance = {"id": recheck_id, "path": str(target), "operator": "supervisor_review",
+                      **identity,
                       "created_at": datetime.now(timezone.utc).isoformat(), "note": review_note.strip(),
-                      "require_policy_comparison": require_policy_comparison,
+                      "require_policy_comparison": require_policy_comparison and not network,
+                      "requested_policy_comparison": require_policy_comparison,
                       "original_attempt_status": attempt["status"], "original_attempt_error": attempt.get("error"),
                       "original_prototype": copy.deepcopy(attempt.get("prototype")),
                       "report_artifacts": report_hashes, "execution_sha256": _hash(execution_raw),
                       "baseline_sha256": _hash(baseline_raw), "source_artifacts": source_hashes,
-                      "source_pin_basis": "original_attempt" if original_pin else ("previous_recheck" if prior else "recheck_start_snapshot"),
+                      "source_pin_basis": pin_basis or ("previous_recheck" if prior else "recheck_start_snapshot"),
                       "scope": "직원 보고 원문을 보존한 합성 모델·화면 재검수입니다. 산업적 유효성·고객 효과·3D 품질·실서비스 반영을 검증하지 않았습니다."}
         _write(target / "input.json", provenance)
         receipt, browser, error = {}, {}, None
         try:
             receipt = engine.prototypes.finish(folder)
-            if receipt.get("ready") is not True or receipt.get("artifacts") != source_hashes:
+            if (receipt.get("ready") is not True or receipt.get("artifacts") != source_hashes
+                    or {key: receipt.get(key) for key in identity} != identity):
                 raise ValueError("데모 정적 검사 또는 작업 파일 해시가 일치하지 않습니다: " + str(receipt.get("error")))
             if not receipt.get("changed_files"):
                 raise ValueError("직원이 수정하지 않은 기본 데모는 개발 결과로 인정하지 않습니다.")
+            if network and not set(receipt["changed_files"]) & {"model.js", "app.js", "index.html", "style.css"}:
+                raise ValueError("선정 문제를 실제 모델·화면 소스에 적용해야 합니다. 문서 변경만으로 개발을 완료 처리하지 않습니다.")
             url = engine.prototypes.open_preview(folder, expected_artifacts=source_hashes)
-            browser = engine.prototype_verifier.verify(url, source_hashes, target)
+            verifier = NetworkVerifier() if network else engine.prototype_verifier
+            browser = verifier.verify(url, source_hashes, target)
             _write(target / "prototype-browser.json", browser)
             checks = browser.get("checks")
             if (browser.get("status") != "passed" or browser.get("artifacts") != source_hashes
@@ -108,11 +163,14 @@ def recover_prototype(engine, mission_id, review_note, require_policy_comparison
                     or any(not isinstance(c, dict) or c.get("status") != "passed" for c in checks)
                     or browser.get("errors") or browser.get("business_acceptance") is not False):
                 raise ValueError("독립 모델·화면 검사를 통과하지 못했습니다.")
+            if network and (browser.get("profile") != NETWORK_PROFILE or browser.get("kind") != "supply_network_gis_checks"):
+                raise ValueError("등록된 공급망 모델·GIS 검증 프로필이 아닙니다.")
             policy = browser.get("policy_comparison") or {}
-            if require_policy_comparison and (policy.get("present") is not True or policy.get("status") != "passed"):
+            if require_policy_comparison and not network and (policy.get("present") is not True or policy.get("status") != "passed"):
                 raise ValueError("필수 정책 비교 검사를 통과하지 못했습니다.")
             checked = engine.prototypes.finish(folder)
-            if checked.get("ready") is not True or checked.get("artifacts") != source_hashes:
+            if (checked.get("ready") is not True or checked.get("artifacts") != source_hashes
+                    or {key: checked.get(key) for key in identity} != identity):
                 raise ValueError("데모 작업 파일이 재검수 도중 변경됐습니다.")
             if ({name: _hash(_read(folder / name, folder)) for name in ARTIFACTS} != report_hashes
                     or _read(folder / "execution.json", folder, 1_000_000) != execution_raw

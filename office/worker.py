@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from .pm import PM_DECISION_SCHEMA, decision_prompt, validate_decision
+from .project_decisions import PROJECT_DECISION_SCHEMA, project_decision_prompt, validate_project_decision
 
 
 def _object(properties):
@@ -284,8 +285,14 @@ class CodexWorker:
         return self._execute(run_dir, prompt, timeout_seconds, cancel_event, on_event,
                              decision_stage=context["stage"])
 
+    def execute_project_decision(self, run_dir, context, timeout_seconds, cancel_event, on_event=None):
+        return self._execute(run_dir, project_decision_prompt(context), timeout_seconds, cancel_event, on_event,
+                             decision_stage=context["stage"], decision_kind="project")
+
     def _execute(self, run_dir, prompt, timeout_seconds, cancel_event, on_event=None, workspace_dir=None,
-                 decision_stage=None, research=False, workspace_kind="office-ui"):
+                 decision_stage=None, research=False, workspace_kind="office-ui", decision_kind="office-ui"):
+        if decision_kind not in ("office-ui", "project") or (decision_kind == "project" and decision_stage is None):
+            raise ValueError("등록된 PM 판단 종류와 단계가 필요합니다.")
         if type(research) is not bool:
             raise ValueError("공개 조사 실행 여부는 true/false로 지정해야 합니다.")
         if research and (workspace_dir is not None or decision_stage is not None):
@@ -361,6 +368,8 @@ class CodexWorker:
             else:
                 prompt += "\n현재 기능은 제공된 자료의 분석과 문서 작성까지입니다."
         schema, criteria_provenance = (PM_DECISION_SCHEMA, None) if decision_stage is not None else _result_contract(run_dir)
+        if decision_kind == "project":
+            schema = PROJECT_DECISION_SCHEMA
         if criteria_provenance is not None:
             prompt += ("\n이번 출력에서는 criterion에 원문 대신 아래의 정확한 기준 ID(C1, C2 등)를 사용하세요. "
                        "이 ID 규칙은 앞의 원문 출력 규칙보다 우선하며, 서버가 저장 전에 원문으로 복원합니다. "
@@ -401,7 +410,7 @@ class CodexWorker:
             logo = workspace / "static/brand/daslab-dark.png"
             if logo.is_file() and not logo.is_symlink():
                 command += ["--image", str(logo)]
-        elif decision_stage == "review":
+        elif decision_stage == "review" and decision_kind == "office-ui":
             # The coordinator copies only its pinned browser captures here.
             # The model cannot request arbitrary local paths as attachments.
             for name in ("review-desktop.png", "review-mobile.png", "review-desktop-keyboard.png", "review-mobile-keyboard.png"):
@@ -510,7 +519,10 @@ class CodexWorker:
                 output.write_text(safe, encoding="utf-8")
                 document = json.loads(safe)
                 if decision_stage is not None:
-                    validate_decision(document, decision_stage)
+                    if decision_kind == "project":
+                        validate_project_decision(document, decision_stage)
+                    else:
+                        validate_decision(document, decision_stage)
                 else:
                     if criteria_provenance is not None:
                         (run_dir / "model-output.json").write_text(safe, encoding="utf-8")

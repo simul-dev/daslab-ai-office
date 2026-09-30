@@ -4,7 +4,7 @@
   const $ = (id) => document.getElementById(id);
   const state = { snapshot: null, receivedAt: Date.now(), selected: "assistant", tab: "work", filter: "all", detail: null, source: null, connected: false, submitting: false, pending: null, detailBusy: false, detailRequest: 0, toastTimer: null, voiceDraft: null, connectionBusy: false };
   const statusNames = { idle: "대기 중", supervising: "감독", queued: "실행 대기", running: "작업 중", working: "작업 중", waiting: "직원 작업 기다리는 중", pausing: "중지 처리 중", paused: "일시 정지", review: "보고서 도착", accepted: "PM 검수 완료", delivered: "반영 처리 완료", completed: "검증 완료", achieved: "달성 보고", partial: "일부 달성 보고", blocked: "진행 막힘", failed: "실행 실패", deferred: "한도 대기", cancelled: "취소됨", unknown: "미측정" };
-  const workflowNames = { planning: "PM이 업무 계획 중", working: "담당 직원이 작업 중", checking: "브라우저에서 기본 동작 확인 중", reviewing: "PM이 결과 검수 중", delivering: "검수한 결과 반영 중", done: "처리 완료", blocked: "진행 막힘" };
+  const workflowNames = { planning: "PM이 업무 계획 중", working: "담당 직원이 작업 중", checking: "브라우저에서 기본 동작 확인 중", reviewing: "PM이 결과 검수 중", awaiting_input: "필요한 자료 답변 대기", delivering: "검수한 결과 반영 중", done: "처리 완료", blocked: "진행 막힘" };
   const attentionStates = new Set(["blocked", "failed", "paused", "pausing", "deferred"]);
   const activeStates = new Set(["queued", "running", "waiting", "pausing"]);
   const writableStates = new Set(["queued", "running", "waiting", "paused", "review", "blocked", "failed", "deferred"]);
@@ -201,13 +201,14 @@
     if (person.standing_duty) append(content, node("p", "staff-note", `정기 책임: ${person.standing_duty}. 업무별 결과는 아래 미션에 남습니다.`));
     if (person.reserved) append(content, node("p", "staff-note", "현재 대표님의 주 창구는 DAS Lab PM입니다. 비서의 기억과 이력은 여러 PM을 조율할 때 이어서 사용합니다."));
     const assigned = state.snapshot.missions.filter((item) => item.employee_id === person.id || item.accountable_id === person.id || (person.kind === "assistant" && item.requested_employee_id === person.id));
-    const active = assigned.filter((item) => activeStates.has(item.status) || attentionStates.has(item.status));
+    const active = assigned.filter((item) => item.current_work !== false && !item.superseded_by && (activeStates.has(item.status) || attentionStates.has(item.status)));
     const shown = active.length ? active.slice(0, 3) : assigned.slice(0, 1);
     if (shown.length) {
       append(content, node("p", "mini-label", active.length ? `관여 중인 업무 ${active.length}건` : "최근 맡은 업무"));
       for (const mission of shown) {
         const button = node("button", "staff-work"); button.type = "button";
-        append(button, badge(mission.status, mission.status_label), node("h3", "", mission.title), node("p", "", mission.summary || mission.last_activity || "실행 결과가 도착하면 여기에 요약합니다."));
+        append(button, mission.superseded_by ? badge("unknown", "이전 결과") : badge(mission.status, mission.status_label), node("h3", "", mission.title), node("p", "", mission.summary || mission.last_activity || "실행 결과가 도착하면 여기에 요약합니다."));
+        if (mission.superseded_by) append(button, node("p", "staff-note", "재작업으로 이어진 이전 결과"));
         button.addEventListener("click", () => openMission(mission.id));
         append(content, button);
       }
@@ -298,12 +299,13 @@
     rows.push(resource("공유 구독 잔여량", execution.remaining_quota === null || execution.remaining_quota === undefined ? "미확인" : String(execution.remaining_quota)));
     if (execution.quota_blocked) rows.push(resource("구독 한도", "한도에 도달해 실행 대기"));
     rows.push(resource("유료 API 자동 전환", execution.paid_fallback ? "활성화됨" : "사용 안 함"));
-    if (execution.managed_pm_enabled) rows.push(resource("PM 업무 관리", "배정 · 검수 · 재작업 연결됨"));
+    if (execution.managed_pm_enabled || execution.project_pm_enabled) rows.push(resource("PM 업무 관리", "배정 · 검수 · 재작업 연결됨"));
     if (connection.available === false && connection.message) rows.push(node("p", "execution-capabilities", connection.message));
     rows.push(node("p", "execution-note", "한 번에 한 직원이 실행됩니다. 한도·실패·서버 중단으로 멈춘 일은 상태를 확인한 후 직접 재개할 수 있습니다."));
     rows.push(node("p", "execution-capabilities", execution.research_enabled ? "전문 직원: 공개 웹 조사·출처 기록·콘텐츠와 제안 초안. PM·R&D의 기존 조직 화면 수정 기능도 유지됩니다. 3D 완성도·실제 게시·고객 접촉은 별도 기록으로 확인합니다." : execution.development_enabled ? "PM·R&D: 조직 운영 화면의 작업본 수정·검사·미리보기 가능. 다른 직원은 자료 분석·문서 작성." : "현재 실행 범위: 제공된 자료의 분석·문서·코드 제안."));
     if (execution.prototype_enabled) rows.push(node("p", "execution-capabilities", "R&D: 격리된 공급망 데모 파일 수정 → 모델 기본 검사 → 실제 브라우저 검수 → PM 결과 검토. 현장 데이터 검증과 3D 제작은 후속 과제입니다."));
-    if (execution.managed_pm_enabled) rows.push(node("p", "execution-capabilities", "PM의 연결 업무는 내부 조직 화면 개선에 적용됩니다. 브라우저 기본 동작 확인과 PM 검수 결과를 업무 상세에서 확인할 수 있습니다."));
+    if (execution.project_pm_enabled) rows.push(node("p", "execution-capabilities", "PM 프로젝트: 자료·방법 조사 → 직원 배정 → 검수·재작업 → 성과 보고. 필수 자료 질문에 답하면 이어서 진행합니다. 공급망 GIS 데모는 별도 작업본에서 검증합니다."));
+    if (execution.managed_pm_enabled) rows.push(node("p", "execution-capabilities", "조직 화면 개선의 작업·브라우저 검사·PM 검수·요청한 반영 경로도 유지됩니다. 세부 결과는 업무 상세에서 확인할 수 있습니다."));
     replace(panel, ...rows);
   }
   function renderStanding() {
@@ -365,14 +367,46 @@
     const workflow = mission.workflow;
     if (!workflow) return;
     const panel = node("section", "detail-section");
-    append(panel, node("h3", "", "PM이 처리하는 순서"), node("p", "", "계획 → 직원 작업 → 기본 동작 확인 → PM 검수 → 요청한 반영·커밋·푸시"));
+    const business = workflow.kind === "business";
+    append(panel, node("h3", "", "PM이 처리하는 순서"), node("p", "", business ? "자료·문제 정의 → 방법 선택 → 조사·실행 배정 → 검수·재작업 → 성과 보고" : "계획 → 직원 작업 → 기본 동작 확인 → PM 검수 → 요청한 반영·커밋·푸시"));
+    if (business && workflow.definition) {
+      append(panel, section("해결할 문제", workflow.definition.problem), section("선택한 방법", workflow.definition.selected_method));
+      append(panel, listSection("성과지표", list(workflow.definition.metrics).map((metric) => `${metric.name}: 기준 ${metric.baseline} / 목표 ${metric.target} / 결과 ${metric.result || "미측정"}`)));
+      append(panel, listSection("목표까지 남은 일", list(workflow.definition.remaining)));
+    }
+    if (business && workflow.stage === "awaiting_input" && mission.status === "blocked") {
+      const form = node("form", "detail-intervention");
+      append(form, node("h3", "", "PM이 필요한 자료를 요청했습니다"), node("p", "detail-notice", "자료가 없으면 없다고 알려 주세요. 답변하면 PM이 가능한 방법을 다시 판단하고 이어갑니다."));
+      for (const question of list(workflow.input_requests)) {
+        const id = `project-input-${workflow.input_round}-${question.id}`;
+        const label = node("label", "", question.question); label.htmlFor = id;
+        const input = node("textarea"); input.id = id; input.dataset.questionId = question.id; input.dataset.projectAnswer = "true"; input.required = true; input.maxLength = 6000; input.rows = 3;
+        append(form, label, node("p", "detail-notice", `${question.needed_for} · 대안: ${question.alternatives}`), input);
+      }
+      const submit = node("button", "button primary", "답변하고 이어서 진행"); submit.type = "submit"; submit.disabled = state.detailBusy;
+      append(form, submit);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (state.detailBusy) return;
+        const answers = Object.fromEntries([...form.querySelectorAll("textarea[data-project-answer]")].map((input) => [input.dataset.questionId, input.value.trim()]));
+        state.detailBusy = true; submit.disabled = true;
+        try {
+          const result = await request(`/api/org/missions/${encodeURIComponent(mission.id)}/input`, { input_round: workflow.input_round, answers });
+          if (state.detail?.mission.id === mission.id) { state.detail = result; renderMissionDetail(); }
+          toast("답변을 저장했습니다. PM이 이어서 진행합니다.");
+        } catch (error) { toast(error.message); }
+        finally { state.detailBusy = false; submit.disabled = false; }
+      });
+      append(panel, form);
+    }
     const current = ["paused", "pausing", "cancelled", "failed", "deferred", "blocked"].includes(mission.status) ? statusLabel(mission.status) : workflowNames[workflow.stage] || "진행 상태 확인 중";
     append(panel, node("p", "", `현재: ${current}${Number.isInteger(workflow.round) && workflow.round > 0 ? ` · 재작업 ${workflow.round}회` : ""}`));
     if (mission.status === "blocked" || workflow.stage === "blocked") append(panel, node("p", "pause-explanation", mission.summary || mission.last_activity || "진행을 막는 이유를 확인하고 있습니다."));
     if (mission.status === "accepted") append(panel, node("p", "detail-notice", "PM이 작업 결과를 검수했습니다. 고객 반응·매출 같은 사업 성과는 별도 확인이 필요합니다."));
     for (const child of list(children)) {
       const button = node("button", "staff-work"); button.type = "button";
-      append(button, badge(child.status, child.status_label), node("h3", "", `${employeeName(child.employee_id)} · ${child.title}`), node("p", "", child.summary || child.last_activity || "아직 결과가 도착하지 않았습니다."));
+      append(button, child.superseded_by ? badge("unknown", "이전 결과") : badge(child.status, child.status_label), node("h3", "", `${employeeName(child.employee_id)} · ${child.title}`), node("p", "", child.summary || child.last_activity || "아직 결과가 도착하지 않았습니다."));
+      if (child.superseded_by) append(button, node("p", "detail-notice", `재작업으로 이어진 이전 결과 · 당시 상태: ${child.status_label || statusLabel(child.status)}`));
       button.addEventListener("click", () => openMission(child.id));
       append(panel, button);
     }
@@ -407,10 +441,12 @@
     // Preserve unfinished intervention text while making newly arrived results visible.
     const previousText = $("intervention-input")?.value || "";
     const previousRecipient = $("reassign-recipient")?.value;
+    const answers = [...$("mission-detail").querySelectorAll("textarea[data-project-answer]")].map((input) => [input.id, input.value]);
     const focusedId = document.activeElement?.id;
     renderMissionDetail();
     if ($("intervention-input")) $("intervention-input").value = previousText;
     if (previousRecipient && $("reassign-recipient")) $("reassign-recipient").value = previousRecipient;
+    for (const [id, value] of answers) if ($(id)) $(id).value = value;
     if (focusedId && $(focusedId)) $(focusedId).focus({ preventScroll: true });
   }
   function renderMissionDetail() {
@@ -465,7 +501,7 @@
       const button = node("button", `button ${className}`, label); button.type = "button"; button.disabled = state.detailBusy || (mission.execution_mode === "delivery" && mission.status === "running"); button.addEventListener("click", () => performAction(action)); append(actions, button);
     }
     if (["queued", "running", "waiting", "deferred"].includes(mission.status)) actionButton("일시 정지", "pause");
-    if (["paused", "failed", "blocked", "deferred"].includes(mission.status)) actionButton("이어서 실행", "resume", "primary");
+    if (["paused", "failed", "blocked", "deferred"].includes(mission.status) && (mission.workflow?.stage !== "awaiting_input" || mission.status === "paused")) actionButton("이어서 실행", "resume", "primary");
     if (mission.status === "review" && mission.execution_mode !== "preview_import") actionButton("결과를 바탕으로 다시 실행", "resume");
     if (["queued", "running", "waiting", "paused", "blocked", "failed", "deferred"].includes(mission.status)) actionButton("업무 취소", "cancel", "danger");
     append(body, actions);

@@ -19,6 +19,11 @@ FILES = ("README.md", "index.html", "style.css", "model.js", "app.js", "model.te
 PAGE_FILES = {"index.html": "text/html", "style.css": "text/css", "model.js": "text/javascript", "app.js": "text/javascript"}
 REQUIRED_IDS = {"model-form", "run-model", "model-results", "model-checks", "model-scene"}
 MAX_PREVIEWS = 16
+FILE_LIMIT_BYTES = 500_000
+WORKSPACE_LIMIT_BYTES = 1_000_000
+TEST_IMPORTS = ("./model.js", "node:assert/strict", "node:fs", "node:vm")
+DEFAULT_PROFILE = "inventory-policy-v1"
+NETWORK_PROFILE = "supply-network-gis-v1"
 
 README = """# DAS Lab 공급망 DES 초안
 
@@ -166,6 +171,125 @@ console.log("Synthetic model self-checks passed; not independent domain validati
 SEED = {"README.md": README, "index.html": HTML, "style.css": CSS, "model.js": MODEL, "app.js": APP, "model.test.cjs": TEST}
 
 
+def _mask_regex_literals(source):
+    """Hide only unambiguous regex bodies from the forbidden-token inspection.
+
+    This is not a JavaScript validator. Strings, comments and template text stay
+    visible to the existing conservative checks; executable template expressions
+    are scanned as code. Ambiguous slashes (including division after an operand)
+    remain visible. The unchanged source still passes through node --check.
+    """
+    masked, length = list(source), len(source)
+    legacy_code_marker = False
+
+    def quoted(index, quote):
+        index += 1
+        while index < length:
+            char = source[index]
+            if char == "\\":
+                index += 2
+            elif char == quote:
+                return index + 1
+            else:
+                index += 1
+        return length
+
+    def regex_end(index):
+        cursor, in_class = index + 1, False
+        while cursor < length:
+            char = source[cursor]
+            if char in "\r\n\u2028\u2029":
+                return None
+            if char == "\\":
+                if cursor + 1 >= length or source[cursor + 1] in "\r\n\u2028\u2029":
+                    return None
+                cursor += 2
+                continue
+            if char == "[":
+                in_class = True
+            elif char == "]":
+                in_class = False
+            elif char == "/" and not in_class:
+                return cursor + 1
+            cursor += 1
+        return None
+
+    def template(index, depth):
+        while index < length:
+            if source[index] == "\\":
+                index += 2
+            elif source[index] == "`":
+                return index + 1
+            elif source.startswith("${", index):
+                index = code(index + 2, True, depth + 1)
+            else:
+                index += 1
+        return length
+
+    def code(index=0, expression=False, depth=0):
+        nonlocal legacy_code_marker
+        if depth > 100:
+            raise ValueError("Prototype template nesting limit exceeded")
+        braces, regex_position = 0, True
+        while index < length:
+            char = source[index]
+            if char.isspace():
+                index += 1
+                continue
+            # Annex B comments/hashbangs are special only in code. Ordinary
+            # quoted/template text and regex bodies never enter this branch.
+            # Fall back before a legacy comment's quotes can confuse scanning.
+            if any(source.startswith(marker, index) for marker in ("<!--", "-->", "#!")):
+                legacy_code_marker = True
+                return length
+            if source.startswith("//", index):
+                while index < length and source[index] not in "\r\n\u2028\u2029":
+                    index += 1
+                continue
+            if source.startswith("/*", index):
+                end = source.find("*/", index + 2)
+                index = length if end < 0 else end + 2
+                continue
+            if char in "\"'":
+                index, regex_position = quoted(index, char), False
+                continue
+            if char == "`":
+                index, regex_position = template(index + 1, depth), False
+                continue
+            if char == "/":
+                end = regex_end(index) if regex_position else None
+                if end is not None:
+                    masked[index:end] = " " * (end - index)
+                    index = end
+                    # Flags are left visible; invalid flags still fail parsing.
+                    while index < length and source[index].isalpha():
+                        index += 1
+                else:
+                    index += 2 if source.startswith("/=", index) else 1
+                regex_position = False
+                continue
+            if char.isalnum() or char in "_$\\":
+                index += 1
+                while index < length and (source[index].isalnum() or source[index] in "_$\\"):
+                    index += 1
+                regex_position = False
+                continue
+            if char == "{":
+                braces += 1
+            elif char == "}":
+                if expression and braces == 0:
+                    return index + 1
+                braces = max(0, braces - 1)
+            # Only syntactically certain operand starts; do not guess after
+            # identifiers, closing braces/parentheses, or postfix operators.
+            regex_position = char in "=([{:;,?"
+            index += 1
+        return index
+
+    code()
+    return source if legacy_code_marker else "".join(masked)
+
+
 class PrototypeWorkspace:
     def __init__(self, root, data_dir):
         self.root, self.data_dir = Path(root).absolute(), Path(data_dir).absolute()
@@ -174,7 +298,7 @@ class PrototypeWorkspace:
     def _folder(self, folder):
         return _safe(folder, self.data_dir)
 
-    def _files(self, workspace):
+    def _files(self, workspace, *, repair=False):
         workspace = _safe(workspace, self.data_dir)
         if not workspace.is_dir():
             raise ValueError("Prototype workspace is missing")
@@ -184,43 +308,138 @@ class PrototypeWorkspace:
             path = _safe(candidate, workspace)
             if path.name not in FILES or not path.is_file():
                 raise ValueError("Unexpected prototype file: " + path.name)
-            if path.stat().st_size > 500_000:
+            limit = WORKSPACE_LIMIT_BYTES if repair and path.name == "README.md" else FILE_LIMIT_BYTES
+            if path.stat().st_size > limit:
                 raise ValueError("Prototype file limit exceeded")
             raw = path.read_bytes()
+            if len(raw) > limit:
+                raise ValueError("Prototype file limit exceeded during read")
             raw.decode("utf-8")
             total += len(raw)
-            if total > 1_000_000:
+            if total > WORKSPACE_LIMIT_BYTES:
                 raise ValueError("Prototype size limit exceeded")
             found[path.name] = raw
         if set(found) != set(FILES):
             raise ValueError("Required prototype files are missing")
         return found
 
-    def prepare(self, folder, previous_folder=None):
+    @staticmethod
+    def _identity(project_id, profile):
+        if not isinstance(project_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", project_id):
+            raise ValueError("Invalid prototype project identity")
+        if profile not in (DEFAULT_PROFILE, NETWORK_PROFILE):
+            raise ValueError("Unknown prototype profile")
+        return {"project_id": project_id, "profile": profile}
+
+    def identity(self, folder):
+        folder = self._folder(folder)
+        baseline = json.loads(_safe(folder / "prototype-baseline.json", folder).read_text(encoding="utf-8"))
+        # Historical workspaces predate profile metadata and belong only to the
+        # original inventory project. They can never seed a new business project.
+        return self._identity(baseline.get("project_id", "daslab-growth"), baseline.get("profile", DEFAULT_PROFILE))
+
+    def repair_snapshot(self, folder, *, project_id, profile, expected_baseline_sha256=None):
+        """Pin bounded source bytes for repair only; never parse or execute code."""
+        snapshot, _ = self._repair_material(folder, project_id=project_id, profile=profile,
+                                            expected_baseline_sha256=expected_baseline_sha256)
+        return snapshot
+
+    def _repair_material(self, folder, *, project_id, profile, expected_baseline_sha256=None):
+        identity = self._identity(project_id, profile)
+        folder = self._folder(folder)
+        path = _safe(folder / "prototype-baseline.json", folder)
+        if not path.is_file() or path.stat().st_size > 100_000 or path.stat().st_nlink != 1:
+            raise ValueError("Invalid prototype repair baseline")
+        raw = path.read_bytes()
+        if len(raw) > 100_000:
+            raise ValueError("Prototype repair baseline limit exceeded")
+        baseline_hash = _hash(raw)
+        if expected_baseline_sha256 is not None and baseline_hash != expected_baseline_sha256:
+            raise ValueError("Prototype repair baseline changed")
+        baseline = json.loads(raw)
+        if {key: baseline.get(key) for key in identity} != identity:
+            raise ValueError("Prototype repair belongs to a different project or profile")
+        workspace = _safe(folder / "workspace", folder)
+        for candidate in workspace.iterdir():
+            checked = _safe(candidate, workspace)
+            if checked.is_file() and checked.stat().st_nlink != 1:
+                raise ValueError("Prototype repair files must not be hard links")
+        # Oversized verification prose may be preserved for editing only. Code
+        # keeps the release cap, and the six-file aggregate cap never changes.
+        files = self._files(workspace, repair=True)
+        if _hash(_safe(path, folder).read_bytes()) != baseline_hash:
+            raise ValueError("Prototype repair baseline changed during inspection")
+        return ({**identity, "repairable": True, "repair_artifacts": {name: _hash(value) for name, value in files.items()},
+                 "repair_baseline_sha256": baseline_hash}, files)
+
+    def _repair_files(self, folder, receipt, identity):
+        """Copy authority is a server receipt, not a worker claim or passing test."""
+        if (not isinstance(receipt, dict) or receipt.get("repairable") is not True
+                or receipt.get("ready") is not False
+                or receipt.get("attempt_id") != Path(folder).name
+                or {key: receipt.get(key) for key in identity} != identity):
+            raise ValueError("Invalid prototype repair source")
+        expected = receipt.get("repair_artifacts")
+        baseline_hash = receipt.get("repair_baseline_sha256")
+        if (not isinstance(expected, dict) or set(expected) != set(FILES)
+                or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in expected.values())
+                or not isinstance(baseline_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", baseline_hash)):
+            raise ValueError("Invalid prototype repair hashes")
+        snapshot, files = self._repair_material(folder, **identity, expected_baseline_sha256=baseline_hash)
+        if snapshot["repair_artifacts"] != expected:
+            raise ValueError("Prototype repair source changed")
+        return files
+
+    def prepare(self, folder, previous_folder=None, *, project_id="daslab-growth", profile=DEFAULT_PROFILE,
+                repair_source=None):
+        identity = self._identity(project_id, profile)
         folder = self._folder(folder)
         workspace = _safe(folder / "workspace", folder)
         if workspace.exists():
             raise ValueError("Prototype workspace already exists")
-        files = {name: value.encode("utf-8") for name, value in SEED.items()}
+        if profile == NETWORK_PROFILE:
+            from .network_prototypes import SEED as seed
+        else:
+            seed = SEED
+        files = {name: value.encode("utf-8") for name, value in seed.items()}
         inherited = None
+        if repair_source is not None and previous_folder is None:
+            raise ValueError("Prototype repair needs an explicit previous workspace")
         if previous_folder is not None:
             previous = self._folder(previous_folder)
-            receipt = self.finish(previous)
-            if not receipt["ready"]:
-                raise ValueError("Previous prototype failed static checks")
-            files = self._files(previous / "workspace")
-            if {name: _hash(raw) for name, raw in files.items()} != receipt["artifacts"]:
-                raise ValueError("Previous prototype changed during copy")
+            if repair_source is not None:
+                files = self._repair_files(previous, repair_source, identity)
+            else:
+                if self.identity(previous) != identity:
+                    raise ValueError("Previous prototype belongs to a different project or profile")
+                receipt = self.finish(previous)
+                if not receipt["ready"]:
+                    raise ValueError("Previous prototype failed static checks")
+                files = self._files(previous / "workspace")
+                if {name: _hash(raw) for name, raw in files.items()} != receipt["artifacts"]:
+                    raise ValueError("Previous prototype changed during copy")
             inherited = str(previous)
         workspace.mkdir(parents=True)
         for name, raw in files.items():
             (workspace / name).write_bytes(raw)
-        baseline = {"files": {name: _hash(raw) for name, raw in files.items()}, "source": inherited or "built-in synthetic DES seed"}
+        seed_source = "built-in synthetic network GIS seed" if profile == NETWORK_PROFILE else "built-in synthetic DES seed"
+        baseline = {"files": {name: _hash(raw) for name, raw in files.items()}, "source": inherited or seed_source,
+                    **identity, "seed": inherited is None}
+        if repair_source is not None:
+            baseline["repair_source"] = {"attempt_id": repair_source.get("attempt_id"),
+                                         "baseline_sha256": repair_source["repair_baseline_sha256"],
+                                         "note": "Unverified source preserved for repair; original failure remains."}
         (folder / "prototype-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
-        return {"project_id": "daslab-growth", "workspace": str(workspace), "files": list(FILES),
+        return {**identity, "workspace": str(workspace), "files": list(FILES),
                 "target": "Isolated synthetic simulation prototype", "source": baseline["source"],
                 "scope": "Only these six files; no existing website/app edits, external dependencies, network, installs, publication or customer contact.",
                 "preview_read_only": True, "model_verified": False,
+                "release_contract": {
+                    "per_file_limit_bytes": FILE_LIMIT_BYTES, "total_limit_bytes": WORKSPACE_LIMIT_BYTES,
+                    "test_literal_require_allowlist": list(TEST_IMPORTS),
+                    "imports": "model.test.cjs에서만 위 문자열의 정확한 require 호출을 허용합니다. node:crypto를 포함한 다른 모듈, 동적 require, import는 금지합니다. model.js/app.js는 모듈 import 없이 작성하세요.",
+                    "verification_summary": "README에는 문제·가정과 검증 시나리오, 핵심 지표, 허용오차, 통과·실패 요약만 간결하게 남기세요. 주문별 전체 JSON·긴 실행 로그·브라우저 덤프를 붙이지 마세요.",
+                    "repair_only_readme": "재작업용 README는 6파일 전체 1,000,000바이트 안에서 임시 보존할 수 있습니다. 최종 제출 전 README를 포함한 각 파일을 500,000바이트 이내로 줄여야 하며, 초과 상태는 미리보기·완료 검사를 통과하지 못합니다."},
                 "checks": "Host performs file/syntax inspection only. Generated tests may run only inside the authorized worker sandbox; browser verification is separate."}
 
     def finish(self, folder):
@@ -229,8 +448,13 @@ class PrototypeWorkspace:
             folder = self._folder(folder)
             files = self._files(folder / "workspace")
             baseline = json.loads(_safe(folder / "prototype-baseline.json", folder).read_text(encoding="utf-8"))
+            identity = self._identity(baseline.get("project_id", "daslab-growth"), baseline.get("profile", DEFAULT_PROFILE))
+            if identity["profile"] == NETWORK_PROFILE:
+                from .network_prototypes import REQUIRED_IDS as required_ids
+            else:
+                required_ids = REQUIRED_IDS
             html = _HTML(files["index.html"].decode("utf-8"))
-            if (html.unsafe or html.body_count != 1 or not REQUIRED_IDS <= html.ids
+            if (html.unsafe or html.body_count != 1 or not required_ids <= html.ids
                     or html.scripts != ["model.js", "app.js"] or html.styles != ["style.css"]):
                 raise ValueError("Prototype HTML must preserve local scripts, styles and model controls")
             source = files["index.html"].decode("utf-8")
@@ -242,12 +466,15 @@ class PrototypeWorkspace:
             if re.search(r"@import\b|url\s*\(", css, re.I):
                 raise ValueError("External CSS resources are not allowed")
             for name in ("model.js", "app.js", "model.test.cjs"):
-                script = files[name].decode("utf-8")
+                # Mask before removing allowed calls: otherwise an operand such
+                # as require('node:fs') / ... could look like a regex position.
+                script = _mask_regex_literals(files[name].decode("utf-8"))
                 if name == "model.test.cjs":
                     # These exact local/builtin imports support worker-sandbox
                     # assertions and DOM stubs. This file is never served or
                     # executed by the host; finish only runs node --check.
-                    script = re.sub(r"\brequire\s*\(\s*(['\"])(?:\./model\.js|node:assert/strict|node:fs|node:vm)\1\s*\)", "", script)
+                    allowed = "|".join(re.escape(value) for value in TEST_IMPORTS)
+                    script = re.sub(r"\brequire\s*\(\s*(['\"])(?:" + allowed + r")\1\s*\)", "", script)
                 if re.search(r"\b(?:import|require|fetch|XMLHttpRequest|WebSocket|EventSource|importScripts)\b|\b(?:sendBeacon|serviceWorker)\b", script):
                     raise ValueError("Network access and external code imports are not allowed")
             checks.append("Six bounded UTF-8 files; no links, reparse points, external references or imports")
@@ -261,7 +488,8 @@ class PrototypeWorkspace:
             checks.append("JavaScript syntax parsed with node --check; model tests were NOT executed on host")
             artifacts = {name: _hash(raw) for name, raw in files.items()}
             changed = sorted(name for name, digest in artifacts.items() if baseline["files"].get(name) != digest)
-            return {"ready": True, "artifacts": artifacts, "changed_files": changed, "seed_only": not changed and baseline["source"] == "built-in synthetic DES seed",
+            seed_only = not changed and (baseline.get("seed") is True or baseline["source"] == "built-in synthetic DES seed")
+            return {"ready": True, **identity, "artifacts": artifacts, "changed_files": changed, "seed_only": seed_only,
                     "checks": checks, "error": None, "model_verified": False, "browser_verified": False, "applied_to_live": False}
         except (ValueError, OSError, UnicodeError, KeyError, subprocess.SubprocessError) as exc:
             return {"ready": False, "artifacts": {}, "changed_files": changed, "checks": checks, "error": str(exc),

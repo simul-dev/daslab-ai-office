@@ -6,8 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from office.development import _hash
 from office.prototype_recovery import recover_prototype
-from office.prototypes import PrototypeWorkspace
+from office.prototypes import NETWORK_PROFILE, PrototypeWorkspace
 from office.providers import CodeReviewer
 from office.worker import render_report
 from tests.test_report_recovery import FixtureEngine, MISSION_ID, ATTEMPT_ID
@@ -216,6 +217,168 @@ class PrototypeRecoveryTests(unittest.TestCase):
         self.assertEqual(proof["source_pin_basis"], "previous_recheck")
         self.assertEqual(proof["source_artifacts"], first["prototype_reverification"]["source_artifacts"])
         self.assertTrue((Path(first["prototype_reverification"]["path"]) / "provenance.json").is_file())
+
+
+class NetworkBrowserFixture(BrowserFixture):
+    def verify(self, url, artifacts, output_dir):
+        receipt = super().verify(url, artifacts, output_dir)
+        receipt.pop("policy_comparison")
+        receipt.update(profile=NETWORK_PROFILE, kind="supply_network_gis_checks")
+        return receipt
+
+
+class NetworkPrototypeRecoveryTests(unittest.TestCase):
+    write_original = PrototypeRecoveryTests.write_original
+    originals = PrototypeRecoveryTests.originals
+    change = PrototypeRecoveryTests.change
+    recover = PrototypeRecoveryTests.recover
+
+    def setUp(self):
+        PrototypeRecoveryTests.setUp(self)
+        self.network_browser = NetworkBrowserFixture()
+        self.verifier = patch("office.prototype_recovery.NetworkVerifier", return_value=self.network_browser)
+        self.verifier.start()
+        self.addCleanup(self.verifier.stop)
+        self.configure_network()
+
+    def configure_network(self, *, code_change=True):
+        from office.network_prototypes import SEED
+
+        self.write_original()
+        self.parent_id = "c" * 32
+        self.identity = {"project_id": self.parent_id, "profile": NETWORK_PROFILE}
+        files = {name: value.encode("utf-8") for name, value in SEED.items()}
+        for name, raw in files.items():
+            (self.folder / "workspace" / name).write_bytes(raw)
+        baseline = {**self.identity, "files": {name: _hash(raw) for name, raw in files.items()},
+                    "source": "built-in synthetic network GIS seed", "seed": True}
+        (self.folder / "prototype-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
+        changed = self.folder / "workspace" / ("model.js" if code_change else "README.md")
+        changed.write_bytes(changed.read_bytes() + b"\n// Synthetic employee fixture change.\n")
+        self.pin = self.engine.prototypes.repair_snapshot(self.folder, **self.identity)
+        failure = {**self.pin, "attempt_id": ATTEMPT_ID, "ready": False, "artifacts": {},
+                   "error": "Original failed source scanner"}
+        self.change("missions", parent_mission_id=self.parent_id, prototype_project_id=self.parent_id,
+                    prototype_profile=NETWORK_PROFILE, prototype=copy.deepcopy(failure))
+        self.change("attempts", prototype=copy.deepcopy(failure))
+        self.parent = {"id": self.parent_id, "status": "paused", "pending_action": None,
+                       "workflow": {"kind": "business", "profile": NETWORK_PROFILE, "child_ids": [MISSION_ID]}}
+        with self.engine.db:
+            self.engine._save("missions", self.parent)
+
+    def test_network_recheck_uses_registered_verifier_without_inventory_policy_and_preserves_failure(self):
+        from office.organization import OrganizationEngine
+
+        before, original = self.originals(), self.engine._get("attempts", ATTEMPT_ID)
+        result = self.recover()  # Same API default that requires inventory policy evidence.
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(result["status"], "review")
+        self.assertEqual(self.browser.calls, [])
+        self.assertEqual(len(self.network_browser.calls), 1)
+        self.assertEqual(self.originals(), before)
+        self.assertEqual(self.engine._get("missions", self.parent_id), self.parent)
+        stored = self.engine._get("attempts", ATTEMPT_ID)
+        self.assertEqual(OrganizationEngine._prototype_receipt(stored), result["prototype"])
+        proof = stored.pop("prototype_reverification")
+        stored.pop("prototype_rechecks")
+        self.assertEqual(stored, original)
+        self.assertEqual(proof["source_pin_basis"], "original_repair_snapshot")
+        self.assertEqual(proof["profile"], NETWORK_PROFILE)
+        self.assertFalse(proof["require_policy_comparison"])
+        self.assertTrue(proof["requested_policy_comparison"])
+        self.assertEqual(result["prototype"]["browser"]["artifacts"], self.pin["repair_artifacts"])
+        self.assertEqual(self.engine._get("missions", MISSION_ID)["result"], self.document)
+        self.engine._prototype_receipt = OrganizationEngine._prototype_receipt
+        self.assertTrue(OrganizationEngine.prototype_preview(self.engine, ATTEMPT_ID).startswith("http://127.0.0.1:"))
+        inherited = self.root / "organization-runs" / ("d" * 32)
+        self.engine.prototypes.prepare(inherited, self.folder, **self.identity)
+        inherited_baseline = json.loads((inherited / "prototype-baseline.json").read_text(encoding="utf-8"))
+        self.assertEqual(inherited_baseline["files"], result["prototype"]["artifacts"])
+        self.assertEqual(inherited_baseline["project_id"], self.parent_id)
+        self.assertEqual(inherited_baseline["profile"], NETWORK_PROFILE)
+        self.assertEqual(self.originals(), before)
+
+    def test_network_recheck_rejects_missing_or_changed_repair_pins_before_browser(self):
+        for defect in ("source", "baseline", "missing_pin", "wrong_attempt", "wrong_pin_profile"):
+            with self.subTest(defect=defect):
+                self.configure_network()
+                attempt = self.engine._get("attempts", ATTEMPT_ID)
+                if defect in ("source", "baseline"):
+                    path = self.folder / ("workspace/model.js" if defect == "source" else "prototype-baseline.json")
+                    path.write_bytes(path.read_bytes() + b"\n ")
+                elif defect == "missing_pin":
+                    attempt["prototype"] = {"ready": False, "artifacts": {}}
+                elif defect == "wrong_attempt":
+                    attempt["prototype"]["attempt_id"] = "d" * 32
+                else:
+                    attempt["prototype"]["profile"] = "inventory-policy-v1"
+                with self.engine.db:
+                    self.engine._save("attempts", attempt)
+                with self.assertRaises(ValueError):
+                    self.recover()
+                self.assertEqual(self.network_browser.calls, [])
+
+    def test_network_recheck_requires_same_paused_parent_and_workspace_profile(self):
+        for defect in ("parent_running", "parent_pending", "wrong_parent_profile", "unowned_child", "wrong_mission_profile", "wrong_project"):
+            with self.subTest(defect=defect):
+                self.configure_network()
+                parent = copy.deepcopy(self.parent)
+                if defect == "parent_running":
+                    parent["status"] = "queued"
+                elif defect == "parent_pending":
+                    parent["pending_action"] = "cancelled"
+                elif defect == "wrong_parent_profile":
+                    parent["workflow"]["profile"] = "inventory-policy-v1"
+                elif defect == "unowned_child":
+                    parent["workflow"]["child_ids"] = []
+                elif defect == "wrong_mission_profile":
+                    self.change("missions", prototype_profile="inventory-policy-v1")
+                else:
+                    self.change("missions", prototype_project_id="d" * 32)
+                with self.engine.db:
+                    self.engine._save("missions", parent)
+                with self.assertRaises(ValueError):
+                    self.recover()
+                self.assertEqual(self.network_browser.calls, [])
+
+    def test_network_document_only_change_cannot_be_promoted(self):
+        self.configure_network(code_change=False)
+        result = self.recover()
+        self.assertFalse(result["passed"])
+        self.assertIn("모델·화면", result["prototype_reverification"]["error"])
+        self.assertEqual(self.network_browser.calls, [])
+
+    def test_network_wrong_browser_profile_kind_or_failure_cannot_be_promoted(self):
+        original_verify = self.network_browser.verify
+        for changes in ({"profile": "inventory-policy-v1"}, {"kind": "inventory_checks"},
+                        {"status": "unavailable"}, {"artifacts": {}}, {"checks": []},
+                        {"errors": ["Browser failure"]}, {"business_acceptance": True}):
+            with self.subTest(changes=changes):
+                self.configure_network()
+                def invalid_receipt(*args):
+                    return {**original_verify(*args), **changes}
+                with patch.object(self.network_browser, "verify", side_effect=invalid_receipt):
+                    result = self.recover()
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["status"], "blocked")
+                self.assertFalse(result["prototype"]["browser_verified"])
+                self.assertEqual(self.engine._get("attempts", ATTEMPT_ID)["status"], "failed")
+
+    def test_network_capture_pins_are_checked_and_passed_recheck_takes_precedence(self):
+        from office.organization import OrganizationEngine
+
+        attempt = self.engine._get("attempts", ATTEMPT_ID)
+        capture = copy.deepcopy(attempt["prototype"])
+        attempt["prototype"] = {"ready": False, "artifacts": {}, "error": "Original scanner failure"}
+        attempt["prototype_repair_capture"] = capture
+        with self.engine.db:
+            self.engine._save("attempts", attempt)
+        result = self.recover()
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["prototype_reverification"]["source_pin_basis"], "captured_repair_snapshot")
+        stored = self.engine._get("attempts", ATTEMPT_ID)
+        self.assertEqual(stored["prototype_repair_capture"], capture)
+        self.assertEqual(OrganizationEngine._prototype_receipt(stored), result["prototype"])
 
 
 class PrototypeRecoveryIntegrationTests(unittest.TestCase):

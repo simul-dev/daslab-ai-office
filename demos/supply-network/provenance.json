@@ -1,0 +1,177 @@
+{
+  "format_version": 1,
+  "project_mission_id": "c91b71b450c941b18e7d735c7e67fdf1",
+  "source_mission_id": "e48b76922dd94b56a32df37d362384fe",
+  "source_attempt_id": "cc45b886986d430db222f9d38738995e",
+  "source_recheck_id": "acd0ec6a4d1e4062bfe2fb5d6c44f3fc",
+  "source_sha256": {
+    "app.js": "b5a80ebd4c25764aa87ffcf494d8fbda17c2e599eaff51eae64b99b3caba16d2",
+    "index.html": "6cba8b368e48118562b69ff1d40d12c7f3fb452732479db25eb37ca578e29cbd",
+    "model.js": "96e86c83bbac1429b748012a260cee1e3997b26c33d96ea5189c58780219bec7",
+    "model.test.cjs": "317f3a294a0f20eb854d550fa840e50e0993c6548a64e2f67fbe99b1fac01bc8",
+    "README.md": "8b1992a26f24eb7a12eb832f3a9778b4bfb823e7d43056417d23c11e88a78c1e",
+    "style.css": "05252d723958dad40ca55a64402818e587fc22259d8f82807183b2ae0eb0c9ea"
+  },
+  "copy_method": "Verified six source files copied byte-for-byte. Original worker self-check notes remain unchanged; later independent and PM review results are recorded here.",
+  "verification": {
+    "completed_at": "2026-09-30T23:12:11.803205+09:00",
+    "status": "passed",
+    "check_count": 17,
+    "checks": [
+      {
+        "name": "baseline independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "repeat independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "no_demand independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "no_capacity independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "higher_demand independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "different_seed independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "known_optimum independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "disruption independent optimum / constraints / raw KPI",
+        "status": "passed"
+      },
+      {
+        "name": "Known optimum, repeatability, equal exogenous inputs and scenario response",
+        "status": "passed"
+      },
+      {
+        "name": "baseline GIS routes and top KPI match recomputed model (demand multiplier 1)",
+        "status": "passed"
+      },
+      {
+        "name": "optimized GIS routes and top KPI match recomputed model (demand multiplier 1)",
+        "status": "passed"
+      },
+      {
+        "name": "baseline GIS routes and top KPI match recomputed model (demand multiplier 2)",
+        "status": "passed"
+      },
+      {
+        "name": "optimized GIS routes and top KPI match recomputed model (demand multiplier 2)",
+        "status": "passed"
+      },
+      {
+        "name": "baseline GIS routes and top KPI match recomputed model (demand multiplier 1)",
+        "status": "passed"
+      },
+      {
+        "name": "optimized GIS routes and top KPI match recomputed model (demand multiplier 1)",
+        "status": "passed"
+      },
+      {
+        "name": "desktop responsive map and KPI display",
+        "status": "passed"
+      },
+      {
+        "name": "mobile responsive map and KPI display",
+        "status": "passed"
+      }
+    ],
+    "scope": "합성 입지·네트워크 최적 목적값, 용량·수요 제약, 원시 주문 KPI·비용, 동일 조건 시뮬레이션, GIS·KPI 화면 일치",
+    "business_acceptance": false
+  },
+  "manual_browser": {
+    "recorded_at": "2026-09-30T23:23:21.250989+09:00",
+    "checks": [
+      {
+        "name": "Baseline / optimized regional case",
+        "status": "passed",
+        "observed": "24,801.9664 / 11,790.6956 cost, 1190/1260 / 1260/1260 delivered"
+      },
+      {
+        "name": "H3 outage two days",
+        "status": "passed",
+        "observed": "49,762.0723 cost, 1060/1260 delivered, 200 lost"
+      },
+      {
+        "name": "Invalid fixed cost 11 then case change",
+        "status": "passed",
+        "observed": "Error displayed; results hidden; fixed cost 1 and regional case recover"
+      },
+      {
+        "name": "H3 keyboard Enter details",
+        "status": "passed",
+        "observed": "100/day allocation, capacity100/day, actual delivered700"
+      },
+      {
+        "name": "Browser error log",
+        "status": "passed",
+        "observed": "No error entries"
+      }
+    ],
+    "method": "Codex in-app browser; controls and rendered DOM; no source edits"
+  },
+  "pm_review": {
+    "status": "accepted",
+    "completed_at": "2026-09-30T14:26:15.432478+00:00",
+    "summary": "지역 배송망의 입지·물량배분 최적화, 공통 외생 지연·장애 시뮬레이션, GIS·상단 KPI를 연결한 합성 내부 데모의 수용을 제안한다. 정상 조건의 운영비용은 24801.966400→11790.695605, 배송률은 94.4444%→100%였지만 평균 리드는 증가했고 H3 장애에서는 개선안이 불리했다. 독립 검수·오류 복구·기존 자료 보존 근거가 확보되어 원래 범위의 남은 일은 없다. 실제 고객 효과·도로망·공개배포는 검증 범위 밖이다.",
+    "metrics": [
+      {
+        "name": "동일 조건의 입지·배분 비용 비교",
+        "baseline": "지역 기본 seed42·7일·수요 및 용량 배율1·거점 상한2, H1/H4 기준안: 계획비용 3543.138057/일, 운영비용 24801.966400 합성 비용단위.",
+        "target": "같은 허용 집합에서 개선안 계획 목적값 비악화 및 비용 항목의 원시 재계산 일치. 기준안도 허용 집합에 포함되는 정확 최적화의 검증 조건이며 고객 절감률 목표는 아니다.",
+        "measurement": "2026-09-30 개발 보고 report[3], 동일 파일의 서버 독립 목적값·제약·원시 KPI 검사, 감독자 실제 브라우저 비용 관찰을 대조했다.",
+        "result": "H1/H3 개선안 계획비용 1684.385086/일, 운영비용 11790.695605. 서버 독립 목적값·원시 KPI 검사가 통과했고 감독자는 화면 비용 24801.9664→11790.6956을 확인했다. 합성 조건의 비용 비교 목표를 충족했다.",
+        "status": "measured"
+      },
+      {
+        "name": "배송 서비스·납기·장애의 의사결정 상충관계",
+        "baseline": "같은 지역 기본 조건의 기준안 배송1190/1260, 배송률·정시율94.4444%, 도착 주문 평균 리드3.682080시간.",
+        "target": "동일 주문 외생 지연과 스트레스 조건에서 비용·배송·정시·평균 리드 및 장애 손실의 차이를 설명한다. 모든 지표의 동시 개선이나 현장 서비스 하한은 설정하지 않는다.",
+        "measurement": "개발 보고의 정상·수요1.2·용량0.6·H3 장애2일 결과와 원시 집계, 서버의 공통 외생 조건·장애 검사 및 2026-09-30 감독자 관찰을 사용했다.",
+        "result": "정상 개선안 배송1260/1260·배송률 및 정시율100%, 평균 리드3.779211시간으로 리드는 증가했다. H3 장애2일에는 비용49762.072311, 배송1060/1260, 장애손실200으로 기준안보다 불리했다. 수요1.2와 용량0.6에서도 양안 비교 결과를 확보했다. 비용 최소 입지의 장애 취약성을 탐색할 수 있다.",
+        "status": "measured"
+      },
+      {
+        "name": "계획 제약·알려진 해·재현성",
+        "baseline": "재작업 전에는 실행 실패와 계약 결함 때문에 최종 모델의 독립 검증이 확보되지 않았다.",
+        "target": "수요 보존 잔차0, 용량 초과0, 비선택 거점 배분0, 정수·거점 수 제약 충족, 알려진 해 일치, 동일 입력 재현성과 양안 주문별 외생 지연 일치.",
+        "measurement": "직원 환경의 S2/R2·경계·민감도 자체 검사와 2026-09-30T14:12:03Z 시작 서버 재검수의 독립 최적값·제약·원시 집계·재현성 기록을 대조했다.",
+        "result": "직원 자체 검사16/16 통과. S2 일비용5.067471→4.134943, R2 비용0.533736 및 역방향 재배치가 기대값과 일치했다. 서버는 알려진 해·수요0·용량0·수요 증가·시드 변경·장애와 공통 외생 조건 검사를 통과했다. 최적성은 제한된 계획 모델에 한정한다.",
+        "status": "measured"
+      },
+      {
+        "name": "GIS·상단 KPI 일치와 탐색·오류 복구",
+        "baseline": "2026-09-30 감독자 코드 검수에서 고정비 배율11 이후 사례 변경 시 예외와 이전 결과 잔류가 확인됐다.",
+        "target": "지역 배송망의 후보·선택 거점·수요지·물동량을 탐색하고 현재 대안의 지도·KPI·계산 결과가 일치한다. 오류 시 사유를 표시하고 이전 결과를 숨기며 유효 입력으로 복구한다.",
+        "measurement": "서버의 양안·수요 배율1/2·데스크톱/모바일 실제 브라우저 검사와 감독자의 H3 Enter 탐색·고정비11 오류·배율1 복구 관찰을 확인했다. 추가 화면 근거는 test-results/project-ui/network-verified-full.png 및 network-verified.png다.",
+        "result": "서버 지도·KPI 일치 및 반응형 검사가 통과했다. 감독자는 H3 Enter에서 계획배분100/일·실제배송700 상세를 확인했고, 고정비11 후 S2 전환에서 오류 표시·결과 숨김, 배율1 복구 후 지역망 재계산을 확인했다. 브라우저 오류 로그는 없었다.",
+        "status": "measured"
+      },
+      {
+        "name": "기존 데모·기록 보존과 격리 범위",
+        "baseline": "기존 재고 정책 데모 원본 attempt 0a5c2a4acdd443f2bb985478833c4a59의 provenance 해시, 보관6파일·운영작업본6파일 및 기존 보고 기록.",
+        "target": "새 network 데모를 허용6파일 안에서 완성하고 기존 재고 정책 데모와 docs/reports/2026-09-30-policy-demo를 변경 없이 보존한다.",
+        "measurement": "직원 최종 파일 크기·변경 목록, 동일 SHA-256의 서버 최종 정적 검사, 2026-09-30 감독자 해시·HEAD 대조와 test-results/project-ui/legacy-preservation.json 기록을 확인했다.",
+        "result": "새 데모6파일 합계84028바이트로 제한을 충족했고 동일 해시의 최종 정적 검사를 통과했다. 감독자가 기존 원본·보관본·운영작업본 해시 일치와 기존 데모·보고의 HEAD 대비 변경 없음을 확인했다. applied_to_live=false로 격리 상태가 유지된다.",
+        "status": "measured"
+      }
+    ]
+  },
+  "limitations": [
+    "Synthetic internal decision demo; no customer field validation.",
+    "Offline EPSG:4326 coordinate map and great-circle distance; no road network or basemap.",
+    "Single-period facility allocation and seeded delivery delay; no inventory carryover or disruption rerouting.",
+    "Existing inventory prototype and operating history retained; no publication or customer contact."
+  ]
+}

@@ -25,6 +25,7 @@ from .management import PMWorkflow
 from .standing import StandingOperations
 from .prototypes import PrototypeWorkspace
 from .prototype_checks import PrototypeVerifier
+from .projects import ProjectWorkflow
 
 
 LABELS = {"queued": "실행 대기", "running": "작업 중", "pausing": "실행 중지 중", "delivered": "반영 처리 완료",
@@ -81,8 +82,8 @@ def _text(payload, key="text", limit=6000):
 
 class OrganizationEngine:
     def __init__(self, root, data_dir, worker=None, reviewer=None, *, extra_runs_today=0):
-        if type(extra_runs_today) is not int or not 0 <= extra_runs_today <= 6:
-            raise ValueError("extra_runs_today must be an integer from 0 to 6")
+        if type(extra_runs_today) is not int or not 0 <= extra_runs_today <= 30:
+            raise ValueError("extra_runs_today must be an integer from 0 to 30")
         # Startup-only allowance: never persisted as a setting or carried into
         # another Korean calendar day (or a restart without the explicit flag).
         self._extra_runs_today = extra_runs_today
@@ -127,6 +128,7 @@ class OrganizationEngine:
         self.prototypes = PrototypeWorkspace(self.root, self.data_dir)
         self.prototype_verifier = PrototypeVerifier()
         self.standing = StandingOperations(self)
+        self.projects = ProjectWorkflow(self)
         for filename in ("knowledge/company-charter.md", "knowledge/daslab-team.md", "knowledge/quality-bar.md"):
             path = self.root / filename
             if path.is_file():
@@ -341,6 +343,9 @@ class OrganizationEngine:
         text, request_id = _text(payload), _text(payload, "request_id", 160)
         requested = payload.get("employee_id") or "assistant"
         context = self._project_context(payload)
+        project = self.projects.wants(payload, text, requested)
+        if project:
+            context = self._project_context({"context": {"project_id": "daslab-growth"}})
         inferred_research = False
         if (payload.get("execution_mode") is None and self.research_policy.get("enabled") is True
                 and not payload.get("source_attempt_id") and not payload.get("delivery_operation")):
@@ -362,11 +367,17 @@ class OrganizationEngine:
             mode = "research"
         explicit_mode = payload.get("execution_mode")
         if explicit_mode is not None:
-            if explicit_mode not in ("analysis", "research", "prototype"):
+            if explicit_mode not in ("analysis", "research", "prototype", "project"):
                 raise ValueError("분석·공개 웹 조사·격리 데모 개발 중 실행 방식을 선택하세요.")
             if not context or context["project_id"] != "daslab-growth" or operation or payload.get("source_attempt_id"):
                 raise ValueError("공개 조사·분석은 사업개발 프로젝트에서 개발·반영과 분리해 실행합니다.")
             mode = explicit_mode
+        if mode == "project" and not project:
+            raise PermissionError("프로젝트 실행은 활성화된 DAS Lab PM에게 맡겨 주세요.")
+        if project:
+            if operation or payload.get("source_attempt_id"):
+                raise ValueError("프로젝트 실행으로 조직 UI 반영·Git 권한을 부여할 수 없습니다.")
+            mode = "project"
         managed = self.management.wants(payload, mode, requested)
         if managed:
             operation = self.management.requested_operation(text)
@@ -387,6 +398,8 @@ class OrganizationEngine:
                     raise Conflict("이미 사용한 요청 ID의 반영 작업을 바꿀 수 없습니다.")
                 if mission.get("requested_execution_mode") != explicit_mode:
                     raise Conflict("이미 사용한 요청 ID의 실행 방식을 바꿀 수 없습니다.")
+                if mission.get("requested_project_profile") != payload.get("project_profile"):
+                    raise Conflict("이미 사용한 요청 ID의 프로젝트 유형을 바꿀 수 없습니다.")
                 return {"mission": self._mission_view(mission), "duplicate": True, "revision": self._revision}
             employee_id, routing = self._route(text, requested)
             if context and context["project_id"] == "daslab-growth" and requested != "assistant":
@@ -431,6 +444,10 @@ class OrganizationEngine:
                     if not policy.get("enabled") or operation not in policy.get("allowed_operations", []):
                         raise PermissionError("요청한 반영 권한이 설정되지 않았습니다.")
                 self.management.initialize(mission)
+            if project:
+                profile = payload.get("project_profile") or ("supply-network-gis-v1" if any(w in text.lower() for w in ("공급망", "입지", "네트워크", "gis")) else "research-deliverable-v1")
+                self.projects.initialize(mission, profile)
+                mission["requested_project_profile"] = payload.get("project_profile")
             self._save("missions", mission)
             self._event("mission.assigned", f"업무 배정: {mission['title']}", employee_id, mission["id"])
             if self._quota_blocked and mode != "delivery":
@@ -449,7 +466,8 @@ class OrganizationEngine:
             if mission.get("parent_mission_id"):
                 raise Conflict("PM의 전체 업무에서 지시·정지·재개해 주세요.")
             if mission.get("workflow"):
-                result = self.management.action(mission, action, payload)
+                handler = self.projects if mission["workflow"].get("kind") == "business" else self.management
+                result = handler.action(mission, action, payload)
                 if action == "instruct":
                     self._remember_feedback(mission, text)
                 return result
@@ -586,6 +604,8 @@ class OrganizationEngine:
         return count
 
     def _mission_view(self, mission):
+        if (mission.get("workflow") or {}).get("kind") == "business":
+            mission = self.projects.mission_projection(mission)
         attempts = self._attempts(mission["id"])
         for child_id in (mission.get("workflow") or {}).get("child_ids", []):
             attempts += self._attempts(child_id)
@@ -601,6 +621,26 @@ class OrganizationEngine:
                     progress_percent=outcome.get("progress_percent"), progress_basis=outcome.get("basis"),
                     report=result.get("report", []), accomplishments=result.get("accomplishments", []),
                     remaining=result.get("remaining", []), next_actions=result.get("next_actions", []), limitations=result.get("limitations", []))
+        # Classify history for display without changing stored outcomes or reports.
+        view.update(superseded_by=None, current_work=True)
+        if mission.get("parent_mission_id"):
+            try:
+                parent = self._get("missions", mission["parent_mission_id"])
+            except KeyError:
+                parent = {}
+            flow = parent.get("workflow") or {}
+            if flow.get("kind") == "business" and mission["id"] in flow.get("child_ids", []):
+                for child_id in flow["child_ids"]:
+                    try:
+                        successor = self._get("missions", child_id)
+                        if successor.get("supersedes") != mission["id"]:
+                            continue
+                        self.projects._revision_count(parent, successor)
+                    except (KeyError, ValueError, TypeError):
+                        continue
+                    view["superseded_by"] = successor["id"]
+                    break
+                view["current_work"] = not view["superseded_by"] and parent.get("status") not in ("accepted", "cancelled")
         view["preview_available"] = bool((mission.get("delivery") or {}).get("ready"))
         if view["preview_available"] and mission["status"] == "review" and not mission.get("workflow") and mission.get("execution_mode") != "preview_import":
             applied = (mission.get("release") or {}).get("applied_to_live")
@@ -645,7 +685,7 @@ class OrganizationEngine:
                     employee["capabilities"].append("격리된 시뮬레이션 데모 개발")
                 assigned = [m for m in missions if m["employee_id"] == employee["id"]]
                 contributions = [a for a in attempts if a["employee_id"] == employee["id"]]
-                display = [m for m in assigned if not (self._active and m["id"] == self._active["mission_id"]
+                display = [m for m in assigned if m["current_work"] and not (self._active and m["id"] == self._active["mission_id"]
                            and self._active["employee_id"] != employee["id"])]
                 if self._active and self._active["employee_id"] == employee["id"]:
                     executing = next((m for m in missions if m["id"] == self._active["mission_id"]), None)
@@ -678,6 +718,7 @@ class OrganizationEngine:
                                   "connection": dict(self.connection), "capabilities": ["제공 자료 분석", "문서 작성", "코드 제안"],
                                   "development_enabled": bool(self.development_policy.get("enabled")),
                                   "managed_pm_enabled": bool(self.management.policy.get("enabled")),
+                                  "project_pm_enabled": bool(self.projects.policy.get("enabled")),
                                   "development_scope": self.development_policy.get("scope"),
                                   "research_enabled": self.research_policy.get("enabled") is True,
                                   "prototype_enabled": self.prototype_policy.get("enabled") is True,
@@ -688,7 +729,7 @@ class OrganizationEngine:
                                 "interventions": sum(m["intervention_count"] for m in missions),
                                 "execution_seconds": round(sum(_elapsed(a) for a in attempts), 1),
                                 "execution_time_unknown": any(m["elapsed_unknown"] for m in missions),
-                                "attention": sum(m["status"] in ("blocked", "failed", "deferred") for m in missions)}}
+                                "attention": sum(m["current_work"] and m["status"] in ("blocked", "failed", "deferred") for m in missions)}}
 
     def wait_revision(self, after, timeout=20):
         with self.changed:
@@ -736,12 +777,16 @@ class OrganizationEngine:
                 finally:
                     with self.changed, self.db:
                         try:
-                            self.management.child_finished(mission_id)
+                            child = self._get("missions", mission_id)
+                            parent = self._get("missions", child["parent_mission_id"]) if child.get("parent_mission_id") else None
+                            handler = self.projects if parent and (parent.get("workflow") or {}).get("kind") == "business" else self.management
+                            handler.child_finished(mission_id)
                         except Exception as exc:
                             child = self._get("missions", mission_id)
                             if child.get("parent_mission_id"):
                                 parent = self._get("missions", child["parent_mission_id"])
-                                self.management.block(parent, "담당 직원의 결과를 연결하지 못했습니다: " + str(exc)[:1000])
+                                handler = self.projects if (parent.get("workflow") or {}).get("kind") == "business" else self.management
+                                handler.block(parent, "담당 직원의 결과를 연결하지 못했습니다: " + str(exc)[:1000])
                             else:
                                 self._event("pm.handoff_failed", "후속 결과 연결에 실패했습니다.", child["employee_id"], mission_id)
                         try:
@@ -857,6 +902,13 @@ class OrganizationEngine:
 
     def _run(self, mission_id):
         with self.lock:
+            if self._get("missions", mission_id).get("execution_mode") == "project":
+                is_project = True
+            else:
+                is_project = False
+        if is_project:
+            return self.projects.run(mission_id)
+        with self.lock:
             managed = self._get("missions", mission_id).get("execution_mode") == "managed"
         if managed:
             return self.management.run(mission_id)
@@ -948,20 +1000,53 @@ class OrganizationEngine:
                 parent = self._get("missions", mission["parent_mission_id"])
                 context["owner_goal"] = {"text": parent["text"], "instructions": parent["instructions"],
                                          "note": "이번 담당 업무는 작업본 수정입니다. 화면 검사·PM 검수·반영·Git은 상위 엔진이 이어서 처리합니다."}
+                if (parent.get("workflow") or {}).get("kind") == "business":
+                    context["owner_goal"] = self.projects.work_context(mission)
         execution, verification, document, error, delivery = {}, None, None, None, None
         prototype_receipt = None
+        repair_candidate, prototype_baseline_sha256 = None, None
         try:
             folder.mkdir(parents=True, exist_ok=False)
             if prototype:
+                project_id = mission.get("prototype_project_id", "daslab-growth")
+                profile = mission.get("prototype_profile", "inventory-policy-v1")
+                repair_source = None
                 with self.lock:
-                    previous = sorted([a for a in self._all("attempts") if self._prototype_receipt(a).get("ready")],
-                                      key=lambda a: a["started_at"], reverse=True)
+                    if mission.get("prototype_project_id"):
+                        if mission.get("parent_mission_id") != project_id or (parent.get("workflow") or {}).get("kind") != "business":
+                            raise ValueError("프로젝트 개발 작업의 상위 미션이 일치하지 않습니다.")
+                        source_id = mission.get("prototype_source_attempt_id")
+                        previous = [self._get("attempts", source_id)] if source_id else []
+                        if previous:
+                            source_mission = self._get("missions", previous[0]["mission_id"])
+                            if (source_mission.get("prototype_project_id") != project_id or source_mission.get("prototype_profile") != profile
+                                    or source_mission.get("parent_mission_id") != project_id
+                                    or source_mission.get("execution_mode") != "prototype"):
+                                raise ValueError("다른 프로젝트의 데모를 상속할 수 없습니다.")
+                    else:
+                        previous = sorted([a for a in self._all("attempts") if self._prototype_receipt(a).get("ready")
+                                           and self._prototype_receipt(a).get("project_id", "daslab-growth") == project_id
+                                           and self._prototype_receipt(a).get("profile", "inventory-policy-v1") == profile],
+                                          key=lambda a: a["started_at"], reverse=True)
                 previous_folder = self.data_dir / "organization-runs" / previous[0]["id"] if previous else None
                 if previous:
-                    checked = self.prototypes.finish(previous_folder)
-                    if checked.get("artifacts") != self._prototype_receipt(previous[0])["artifacts"]:
-                        raise ValueError("이전 데모 파일이 검증 후 달라졌습니다.")
-                context["prototype"] = self.prototypes.prepare(folder, previous_folder)
+                    source_receipt = self._prototype_receipt(previous[0])
+                    if mission.get("prototype_project_id") and source_receipt.get("repairable") is True and not source_receipt.get("ready"):
+                        repair_source = source_receipt
+                        expected_source_artifacts = source_receipt["repair_artifacts"]
+                    else:
+                        checked = self.prototypes.finish(previous_folder)
+                        expected_source_artifacts = source_receipt["artifacts"]
+                        if not checked.get("ready") or checked.get("artifacts") != expected_source_artifacts:
+                            raise ValueError("이전 데모 파일이 검증 후 달라졌습니다.")
+                context["prototype"] = self.prototypes.prepare(folder, previous_folder, project_id=project_id, profile=profile,
+                                                               repair_source=repair_source)
+                if previous:
+                    copied = json.loads((folder / "prototype-baseline.json").read_text(encoding="utf-8"))
+                    if copied.get("files") != expected_source_artifacts:
+                        raise ValueError("이전 데모 파일이 복사 중 변경되었습니다.")
+                if mission.get("prototype_project_id"):
+                    prototype_baseline_sha256 = self.prototypes.repair_snapshot(folder, project_id=project_id, profile=profile)["repair_baseline_sha256"]
             if development:
                 previous = next((a for a in reversed(attempts) if (a.get("delivery") or {}).get("ready")), None)
                 source_id = previous["id"] if previous else mission.get("source_attempt_id")
@@ -1021,7 +1106,17 @@ class OrganizationEngine:
                 kwargs["research"] = True
             if prototype:
                 kwargs.update(workspace_dir=folder / "workspace", workspace_kind="prototype")
-            execution = self.worker.execute(folder, prompt, self.config["timeout_seconds"], cancel, **kwargs)
+            timeout_seconds = self.config["timeout_seconds"]
+            if prototype and mission.get("prototype_project_id"):
+                timeout_seconds = self.projects.policy.get("prototype_timeout_seconds", timeout_seconds)
+            execution = self.worker.execute(folder, prompt, timeout_seconds, cancel, **kwargs)
+            if prototype_baseline_sha256 is not None and not cancel.is_set():
+                try:
+                    repair_candidate = self.prototypes.repair_snapshot(folder, project_id=project_id, profile=profile,
+                                                                       expected_baseline_sha256=prototype_baseline_sha256)
+                except (ValueError, OSError, UnicodeError, KeyError, TypeError):
+                    # An unsafe workspace can fail normally, but cannot seed repair.
+                    repair_candidate = None
             (folder / "execution.json").write_text(_dump(execution), encoding="utf-8")
             if not cancel.is_set():
                 verification = self.reviewer.review(folder, execution, mission["acceptance_criteria"], "daslab")
@@ -1056,9 +1151,16 @@ class OrganizationEngine:
                         if not prototype_receipt.get("changed_files"):
                             error = "데모 파일을 수정하지 않아 개발 완료로 인정하지 않았습니다."
                             raise ValueError(error)
+                        if mission.get("prototype_profile") == "supply-network-gis-v1" and not set(prototype_receipt["changed_files"]) & {"model.js", "app.js", "index.html", "style.css"}:
+                            error = "선정 문제를 실제 모델·화면 소스에 적용해야 합니다. 문서 변경만으로 개발을 완료 처리하지 않습니다."
+                            raise ValueError(error)
                         preview_url = self.prototypes.open_preview(folder, expected_artifacts=prototype_receipt["artifacts"])
                         prototype_receipt.update(attempt_id=attempt_id, preview_url=f"/prototypes/{attempt_id}/", browser_verified=False)
-                        browser = self.prototype_verifier.verify(preview_url, prototype_receipt["artifacts"], folder, cancel)
+                        verifier = self.prototype_verifier
+                        if mission.get("prototype_profile") == "supply-network-gis-v1":
+                            from .network_checks import NetworkVerifier
+                            verifier = NetworkVerifier()
+                        browser = verifier.verify(preview_url, prototype_receipt["artifacts"], folder, cancel)
                         (folder / "prototype-browser.json").write_text(_dump(browser), encoding="utf-8")
                         prototype_receipt.update(browser=browser, browser_verified=browser["status"] == "passed",
                                                  model_verified=browser["status"] == "passed")
@@ -1085,6 +1187,19 @@ class OrganizationEngine:
         except Exception as exc:
             error = error or f"실행 또는 결과 검증을 마치지 못했습니다 ({type(exc).__name__})."
             document = None
+        if repair_candidate is not None and document is None and not cancel.is_set():
+            try:
+                current_source = self.prototypes.repair_snapshot(folder, project_id=project_id, profile=profile,
+                                                                 expected_baseline_sha256=prototype_baseline_sha256)
+                if current_source != repair_candidate:
+                    raise ValueError("Prototype repair source changed during verification")
+                prototype_receipt = {**repair_candidate, "attempt_id": attempt_id, "ready": False, "artifacts": {},
+                                     "error": (prototype_receipt or {}).get("error") or error,
+                                     "checks": (prototype_receipt or {}).get("checks", []),
+                                     "model_verified": False, "browser_verified": False, "applied_to_live": False}
+            except (ValueError, OSError, UnicodeError, KeyError, TypeError):
+                # Never replace the pinned source with files changed by a checker.
+                pass
         with self.changed, self.db:
             current = self._get("missions", mission_id)
             stamp = _now()
@@ -1167,7 +1282,11 @@ class OrganizationEngine:
         recheck = attempt.get("prototype_reverification") or {}
         if recheck.get("passed") is True:
             return recheck.get("prototype") or {}
-        return attempt.get("prototype") or {}
+        original = attempt.get("prototype") or {}
+        capture = attempt.get("prototype_repair_capture") or {}
+        if not original.get("ready") and capture.get("repairable") is True and capture.get("ready") is False:
+            return capture
+        return original
 
     def prototype_preview(self, attempt_id):
         with self.lock:

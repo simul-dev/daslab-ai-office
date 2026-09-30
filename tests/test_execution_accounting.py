@@ -110,6 +110,13 @@ class DailyAllowanceTests(unittest.TestCase):
         self.assertEqual(self.engine._daily_used(), 1)
         self.assertEqual((self.root / "config/office.json").read_bytes(), config_bytes)
 
+    def test_project_validation_allowance_is_bounded_and_startup_only(self):
+        self.restart(30)
+        self.assertEqual(self.engine._daily_limit(), 40)
+        self.assertEqual(self.engine.config["daily_runs"], 10)
+        self.restart()
+        self.assertEqual(self.engine._daily_limit(), 10)
+
     def test_allowance_expires_at_korean_midnight_in_same_process(self):
         current = [datetime(2026, 9, 30, 14, 59, 59, tzinfo=timezone.utc)]
         with patch("office.organization.datetime", wraps=datetime) as clock:
@@ -140,14 +147,14 @@ class DailyAllowanceTests(unittest.TestCase):
         self.assertEqual(self.engine._daily_used(), 1)
 
     def test_allowance_rejects_invalid_values_before_opening_storage(self):
-        for value in (-1, 7, True, 1.5, "6", None):
+        for value in (-1, 31, True, 1.5, "6", None):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 OrganizationEngine(self.root, self.root / "unused", extra_runs_today=value)
         self.assertFalse((self.root / "unused").exists())
 
     def test_cli_rejects_nonpositive_or_unbounded_allowance(self):
         import server
-        for value in ("0", "-1", "7", "1.5"):
+        for value in ("0", "-1", "31", "1.5"):
             with self.subTest(value=value), patch("sys.argv", ["server.py", "--extra-runs-today", value]), \
                     patch("server.InstanceLock") as instance_lock, redirect_stderr(io.StringIO()), \
                     self.assertRaises(SystemExit) as failure:

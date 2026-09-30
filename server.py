@@ -14,6 +14,7 @@ from office.service import Office
 from office.store import Conflict
 from office.report_recovery import recover_future_actions, recover_report_references, restore_unstarted_report
 from office.prototype_recovery import recover_prototype
+from office.prototype_capture import capture_prototype_repair_source
 
 ROOT = Path(__file__).resolve().parent
 
@@ -241,9 +242,14 @@ def handler_for(office, organization=None):
                     self.respond(200, organization.standing.register_schedule(body.get("automation_id")))
                 elif organization is not None and path == "/api/org/missions" and write:
                     self.respond(201, organization.submit(body))
+                elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/input", path)):
+                    self.respond(200, organization.projects.answer(m[1], body))
                 elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/recheck-prototype", path)):
                     self.respond(200, recover_prototype(organization, m[1], body.get("review_note"),
                                                         require_policy_comparison=True))
+                elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/capture-prototype-repair", path)):
+                    self.respond(200, capture_prototype_repair_source(organization, m[1], body.get("attempt_id"),
+                                 body.get("expected_artifacts"), body.get("expected_baseline_sha256")))
                 elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/recover-report", path)):
                     if body.get("kind") == "restore_unstarted":
                         result = restore_unstarted_report(organization, m[1], body.get("expected_attempt_id"), body.get("review_note"))
@@ -326,8 +332,8 @@ def main():
     parser = argparse.ArgumentParser(description="DAS Lab AI Office — 로컬 관리자 웹")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
-    parser.add_argument("--extra-runs-today", type=int, choices=range(1, 7), default=0,
-                        help="이번 서버 실행의 오늘(한국 시간)에만 내부 실행 1~6회 추가")
+    parser.add_argument("--extra-runs-today", type=int, choices=range(1, 31), default=0,
+                        help="이번 서버 실행의 오늘(한국 시간)에만 내부 실행 1~30회 추가")
     args = parser.parse_args()
     data_dir = args.data_dir.resolve()
     lock = InstanceLock(data_dir)

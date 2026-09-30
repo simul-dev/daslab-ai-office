@@ -4,6 +4,7 @@ These tests never invoke a model, read production data, or establish business su
 """
 import http.client
 import json
+import os
 import shutil
 import tempfile
 import threading
@@ -55,6 +56,9 @@ class OrganizationHTTPTests(unittest.TestCase):
         source = Path(__file__).resolve().parents[1]
         for folder in ("knowledge", "config"):
             shutil.copytree(source / folder, self.root / folder)
+        # These HTTP tests exercise the legacy single-assignment contract.
+        # Project coordination has its own worker, lifecycle and UI fixtures.
+        (self.root / "config/projects.json").write_text('{"enabled": false}', encoding="utf-8")
         self.worker = ControlledWorker()
         self.organization = OrganizationEngine(self.root, self.data, worker=self.worker)
         self.legacy = Mock()
@@ -305,13 +309,27 @@ class OrganizationHTTPTests(unittest.TestCase):
         self.assertEqual(derived["verification"], "ai_unverified")
 
     def test_external_host_origin_and_missing_csrf_header_cannot_mutate(self):
+        with self.organization.lock:
+            changes_before = self.organization.db.total_changes
         for headers in ({"Host": "attacker.example"}, {"Origin": "https://attacker.example"},
                         {"X-DAS-Office": ""}, {"Content-Type": "text/plain"}):
             with self.subTest(headers=headers):
-                status, _, _ = self.request("/api/org/missions", "POST",
-                                            {"request_id": "rejected", "text": "이 요청을 실행해 줘"}, headers)
-                self.assertEqual(status, 403)
-        self.assertEqual(self.snapshot()["missions"], [])
+                try:
+                    status, _, _ = self.request("/api/org/missions", "POST",
+                                                {"request_id": "rejected", "text": "이 요청을 실행해 줘"}, headers)
+                except (ConnectionAbortedError, ConnectionResetError) as exc:
+                    # Header rejection happens before the POST body is consumed.
+                    # Windows may reset that connection before its 403 is read;
+                    # only those concrete socket errors count as a rejection.
+                    if os.name != "nt" or getattr(exc, "winerror", None) not in (10053, 10054):
+                        raise
+                else:
+                    self.assertEqual(status, 403)
+                self.assertEqual(self.snapshot()["missions"], [])
+                with self.organization.lock:
+                    self.assertEqual(self.organization.db.total_changes, changes_before)
+                self.assertEqual(self.worker.calls, [])
+                self.legacy.submit_mission.assert_not_called()
 
     def test_invalid_payloads_and_unknown_employee_do_not_persist(self):
         invalid = ({}, {"text": ""}, {"text": "업무를 요약해 줘", "request_id": ""},
