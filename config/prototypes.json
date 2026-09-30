@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "project_id": "daslab-growth",
+  "allowed_employee_ids": ["das-rd", "das-pm"],
+  "authorization_source": "대표의 2026-09-30 지시: 시뮬레이션 문제 정의·모델 구현·검증 가능한 데모 개발을 정기적으로 수행",
+  "scope": "실행별 분리된 workspace의 자체 포함 시뮬레이션 초안과 로컬 미리보기. 공개 홈페이지·조직 화면·운영 데이터·설치·외부 배포 제외",
+  "files": ["README.md", "index.html", "style.css", "model.js", "app.js", "model.test.cjs"]
+}

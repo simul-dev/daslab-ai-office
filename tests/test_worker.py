@@ -66,6 +66,9 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertIn("제안서나 실행 계획만 작성했다면 원래 미션을 달성했다고 하지 마세요", prompt)
         self.assertIn("실제 요청한 결과만 간결하게 나누세요", prompt)
         self.assertIn("품질 규칙을 그 자체가 요청한 결과가 아닌데 진행 항목으로 세지 마세요", prompt)
+        self.assertIn("remaining에는 이번 미션 범위에서 아직 미완료한 일만", prompt)
+        self.assertIn("다음 단계는 next_actions", prompt)
+        self.assertIn("임의로 다음 단계로 옮겨 완료 처리하지 마세요", prompt)
 
     def test_development_enables_only_scoped_workspace_tools(self):
         workspace = self.folder / "workspace"
@@ -189,6 +192,11 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("<summary>처리 판단과 근거 보기</summary>", report)
         self.assertNotIn("report[0].content", report)
         self.assertNotIn("대표의 내용 검토", report)
+        self.assertNotIn("## 다음 단계", report)
+        document["next_actions"] = ["다음 개발 회차에서 비교 데모를 구현합니다."]
+        updated = render_report(document)
+        self.assertIn("## 다음 단계\n\n- 다음 개발 회차", updated)
+        self.assertEqual(document["remaining"], ["고객에게 발송"])
         document["milestones"] = [{"criterion": "자료 비교", "deliverable": "견적 가격 비교", "status": "met",
                                    "artifact_section": "report", "explanation": "견적 가격을 비교했습니다."}]
         self.assertIn("견적 가격 비교 — 충족", render_report(document))
@@ -201,6 +209,9 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("report", fields)
         self.assertIn("outcome", fields)
         self.assertIn("milestones", fields)
+        self.assertIn("next_actions", fields)
+        self.assertEqual(fields["next_actions"], {"type": "array", "items": {"type": "string"}})
+        self.assertIn("next_actions", RESULT_SCHEMA["required"])
         self.assertIn("milestones", RESULT_SCHEMA["required"])
         self.assertNotIn("mvp", fields)
         self.assertNotIn("required_inputs", fields)

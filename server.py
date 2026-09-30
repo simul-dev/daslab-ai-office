@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 
 from office.service import Office
 from office.store import Conflict
+from office.report_recovery import recover_future_actions, recover_report_references
 
 ROOT = Path(__file__).resolve().parent
 
@@ -218,12 +219,35 @@ def handler_for(office, organization=None):
                     self.send_header("Content-Length", "0")
                     self.security_headers()
                     self.end_headers()
+                elif organization is not None and not write and (m := re.fullmatch(r"/prototypes/([a-f0-9]{32})/", path)):
+                    location = organization.prototype_preview(m[1])
+                    self.send_response(302)
+                    self.send_header("Location", location)
+                    self.send_header("Content-Length", "0")
+                    self.security_headers()
+                    self.end_headers()
                 elif organization is not None and path == "/api/org/events" and not write:
                     self.stream_organization()
                 elif organization is not None and path == "/api/org/connection" and write:
                     self.respond(200, organization.refresh_connection())
+                elif organization is not None and path == "/api/org/standing" and not write:
+                    self.respond(200, organization.standing.snapshot())
+                elif organization is not None and path == "/api/org/standing/tick" and write:
+                    self.respond(200, organization.standing.tick())
+                elif organization is not None and path == "/api/org/standing/pause" and write:
+                    self.respond(200, organization.standing.set_paused(body.get("paused")))
+                elif organization is not None and path == "/api/org/standing/schedule" and write:
+                    self.respond(200, organization.standing.register_schedule(body.get("automation_id")))
                 elif organization is not None and path == "/api/org/missions" and write:
                     self.respond(201, organization.submit(body))
+                elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/recover-report", path)):
+                    if body.get("kind") == "references":
+                        result = recover_report_references(organization, m[1], body.get("expected_milestones"), body.get("replacements"), body.get("review_note"))
+                    elif body.get("kind", "future_actions") == "future_actions":
+                        result = recover_future_actions(organization, m[1], body.get("expected_remaining"), body.get("review_note"))
+                    else:
+                        raise ValueError("지원하는 보고서 분류·참조 교정만 사용할 수 있습니다.")
+                    self.respond(200, result)
                 elif organization is not None and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})(?:/(action))?", path)):
                     mission_id, action = m.groups()
                     if write and action:

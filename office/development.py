@@ -17,7 +17,7 @@ REQUIRED = ('office.html', 'office.css', 'office.js')
 ASSETS = {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.ico', '.woff2'}
 PREVIEW_JS = r'''"use strict";
 (() => {
- const deny = '#command-form, #assign-selected, .memory-form, .detail-actions, .detail-intervention, #reconnect, .runtime-check';
+ const deny = '#command-form, #assign-selected, .memory-form, .detail-actions, .detail-intervention, #reconnect, .runtime-check, .standing-action';
  const lock = () => {
   document.querySelectorAll(deny).forEach(e => { e.querySelectorAll('button,input,textarea,select').forEach(x => { if (!x.disabled) x.disabled = true; }); if (e.matches('button') && !e.disabled) e.disabled = true; });
   document.querySelectorAll('a[href^="/voice"],a[href="/legacy"]').forEach(e => { e.removeAttribute('href'); e.setAttribute('aria-disabled','true'); });

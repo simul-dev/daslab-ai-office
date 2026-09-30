@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "allowed_employee_ids": ["das-pm", "das-rd", "das-mkt", "das-sales"],
+  "authorization_source": "대표의 2026-09-30 직접 지시: 기술·시장 조사와 정기 사업개발 실행",
+  "billing": "existing_subscription_only",
+  "scope": "공개 웹 조사·출처 기록·내부 보고 및 콘텐츠·제안 초안"
+}

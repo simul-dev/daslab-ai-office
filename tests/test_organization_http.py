@@ -130,9 +130,13 @@ class OrganizationHTTPTests(unittest.TestCase):
         snapshot = self.snapshot()
         staff = {employee["id"]: employee for employee in snapshot["employees"]}
         self.assertEqual(set(staff), {"owner", "assistant", "das-pm", "das-rd", "das-mkt", "das-sales"})
-        for employee_id, parent_id in (("assistant", "owner"), ("das-pm", "assistant"),
+        for employee_id, parent_id in (("assistant", "owner"), ("das-pm", "owner"),
                                        ("das-rd", "das-pm"), ("das-mkt", "das-pm"), ("das-sales", "das-pm")):
             self.assertEqual(staff[employee_id]["parent_id"], parent_id)
+        self.assertTrue(snapshot["standing"]["enabled"])
+        self.assertEqual(snapshot["primary_contact_id"], "das-pm")
+        self.assertTrue(staff["assistant"]["reserved"])
+        self.assertGreater(staff["assistant"]["memory_count"], 0)
         self.assertEqual(snapshot["missions"], [])
         self.assertEqual(snapshot["metrics"]["verified_outcomes"], 0)
         self.assertIsNone(snapshot["execution"]["remaining_quota"])

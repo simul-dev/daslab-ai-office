@@ -72,12 +72,13 @@
     if (!snapshot || !Array.isArray(snapshot.employees) || !Array.isArray(snapshot.missions)) throw new Error("조직 상태 응답을 확인하지 못했습니다.");
     if (state.snapshot && number(snapshot.revision) < number(state.snapshot.revision)) return;
     const changed = !state.snapshot || snapshot.revision !== state.snapshot.revision;
+    if (!state.snapshot && snapshot.primary_contact_id) state.selected = snapshot.primary_contact_id;
     state.snapshot = snapshot;
     state.receivedAt = Date.now();
     if (!employee(state.selected)) state.selected = snapshot.employees.find((item) => item.kind === "assistant")?.id || snapshot.employees.find((item) => item.kind !== "owner")?.id;
     notice("");
     if (!changed) return;
-    renderMetrics(); renderTree(); renderInspector(); renderMissions(); renderExecution(); renderEvents(); renderRecipient();
+    renderMetrics(); renderTree(); renderInspector(); renderMissions(); renderExecution(); renderStanding(); renderEvents(); renderRecipient();
     $("last-update").textContent = `${timeText(new Date().toISOString())} 반영`;
     if (state.detail && $("mission-dialog").open) {
       const updated = snapshot.missions.find((item) => item.id === state.detail.mission.id);
@@ -115,7 +116,7 @@
     const running = snapshot.missions.filter((item) => item.status === "running").length;
     const queue = snapshot.missions.filter((item) => item.status === "queued").length;
     $("metric-employees").textContent = staff.length;
-    $("metric-employee-note").textContent = `비서 · PM · 전문 직원 ${staff.length}명`;
+    $("metric-employee-note").textContent = snapshot.standing?.enabled ? "PM · 전문 직원 4명 / 비서 확장 대기" : `비서 · PM · 전문 직원 ${staff.length}명`;
     $("metric-running").textContent = running;
     $("metric-running-note").textContent = `실행 대기 ${queue}건 · 누적 개입 ${number(snapshot.metrics?.interventions)}회`;
     $("metric-achieved").textContent = topMissions().filter((item) => item.outcome === "achieved").length;
@@ -148,7 +149,7 @@
         append(button,
           append(node("div", "node-top"), node("span", "node-glyph", glyphs[person.id] || "AI"), status),
           node("div", "node-name", person.name), node("div", "node-role", person.role),
-          node("div", "node-work", person.current_mission?.title || (person.status === "idle" ? "새로운 업무를 기다리고 있어요" : "진행 기록에서 상태 확인")));
+          node("div", "node-work", person.current_mission?.title || (person.reserved ? "여러 PM이 생길 때 역할 확장" : person.standing_duty ? `정기 책임 · ${person.standing_duty}` : "진행 기록에서 상태 확인")));
         button.addEventListener("click", () => chooseEmployee(person.id));
         append(item, button);
       }
@@ -197,6 +198,8 @@
     panel.dataset.person = person.id;
   }
   function renderEmployeeWork(content, person) {
+    if (person.standing_duty) append(content, node("p", "staff-note", `정기 책임: ${person.standing_duty}. 업무별 결과는 아래 미션에 남습니다.`));
+    if (person.reserved) append(content, node("p", "staff-note", "현재 대표님의 주 창구는 DAS Lab PM입니다. 비서의 기억과 이력은 여러 PM을 조율할 때 이어서 사용합니다."));
     const assigned = state.snapshot.missions.filter((item) => item.employee_id === person.id || item.accountable_id === person.id || (person.kind === "assistant" && item.requested_employee_id === person.id));
     const active = assigned.filter((item) => activeStates.has(item.status) || attentionStates.has(item.status));
     const shown = active.length ? active.slice(0, 3) : assigned.slice(0, 1);
@@ -210,7 +213,7 @@
       }
     } else append(content, append(node("p", "empty-note"), node("strong", "", "아직 맡긴 업무가 없어요."), node("span", "", "일을 맡기면 담당과 실행 상태, 결과가 이 직원에게 연결됩니다.")));
     append(content, staffMeta("보고 대상", employeeName(person.manager_id || person.parent_id)), staffMeta("마지막 활동", timeText(person.last_activity_at, true)));
-    append(content, node("p", "staff-note", person.kind === "assistant" ? "요청은 내용에 따라 담당 직원에게 전달됩니다. 현재 담당 선택은 규칙 기반입니다." : person.kind === "pm" ? state.snapshot.execution?.managed_pm_enabled ? "조직 화면 개선 업무를 계획하고 담당 직원에게 맡깁니다. 결과를 검수하고 필요한 수정을 이어서 요청합니다." : "DAS Lab 미션의 책임자로 기록됩니다. 실행은 전문 직원에게 연결되며, 현재 검수는 보고서 구조 확인까지입니다." : "직원별 역할과 저장된 기억을 다음 실행에 전달합니다. 대기 중에는 LLM을 계속 실행하지 않습니다."));
+    append(content, node("p", "staff-note", person.kind === "assistant" ? "요청은 내용에 따라 담당 직원에게 전달됩니다. 현재 담당 선택은 규칙 기반입니다." : person.kind === "pm" ? state.snapshot.standing?.enabled ? "정기 업무 결과를 함께 검토하고 프로젝트별 담당·우선순위·다음 작업을 정리합니다. 대표의 피드백은 다음 검토에 반영합니다." : state.snapshot.execution?.managed_pm_enabled ? "조직 화면 개선 업무를 계획하고 담당 직원에게 맡깁니다. 결과를 검수하고 필요한 수정을 이어서 요청합니다." : "DAS Lab 미션의 책임자로 기록됩니다. 실행은 전문 직원에게 연결되며, 현재 검수는 보고서 구조 확인까지입니다." : "직원별 역할과 저장된 기억을 다음 실행에 전달합니다. 대기 중에는 LLM을 계속 실행하지 않습니다."));
   }
   function memorySource(memory) {
     if (memory.verification === "ai_unverified") return "AI 기록 · 미검증";
@@ -298,8 +301,37 @@
     if (execution.managed_pm_enabled) rows.push(resource("PM 업무 관리", "배정 · 검수 · 재작업 연결됨"));
     if (connection.available === false && connection.message) rows.push(node("p", "execution-capabilities", connection.message));
     rows.push(node("p", "execution-note", "한 번에 한 직원이 실행됩니다. 한도·실패·서버 중단으로 멈춘 일은 상태를 확인한 후 직접 재개할 수 있습니다."));
-    rows.push(node("p", "execution-capabilities", execution.development_enabled ? "PM·R&D: 조직 운영 화면의 작업본 수정·검사·미리보기 가능. 다른 직원은 자료 분석·문서 작성. 외부 배포·정기 실행·임시 직원 생성은 아직 연결되지 않았습니다." : "현재 실행 범위: 제공된 자료의 분석·문서·코드 제안. 실제 파일 수정·외부 조사·게시·배포는 연결되지 않았습니다."));
+    rows.push(node("p", "execution-capabilities", execution.research_enabled ? "전문 직원: 공개 웹 조사·출처 기록·콘텐츠와 제안 초안. PM·R&D의 기존 조직 화면 수정 기능도 유지됩니다. 3D 완성도·실제 게시·고객 접촉은 별도 기록으로 확인합니다." : execution.development_enabled ? "PM·R&D: 조직 운영 화면의 작업본 수정·검사·미리보기 가능. 다른 직원은 자료 분석·문서 작성." : "현재 실행 범위: 제공된 자료의 분석·문서·코드 제안."));
+    if (execution.prototype_enabled) rows.push(node("p", "execution-capabilities", "R&D: 격리된 공급망 데모 파일 수정 → 모델 기본 검사 → 실제 브라우저 검수 → PM 결과 검토. 현장 데이터 검증과 3D 제작은 후속 과제입니다."));
     if (execution.managed_pm_enabled) rows.push(node("p", "execution-capabilities", "PM의 연결 업무는 내부 조직 화면 개선에 적용됩니다. 브라우저 기본 동작 확인과 PM 검수 결과를 업무 상세에서 확인할 수 있습니다."));
+    replace(panel, ...rows);
+  }
+  function renderStanding() {
+    const panel = $("standing-content");
+    if (!panel) return;
+    const standing = state.snapshot.standing;
+    if (!standing?.enabled) { replace(panel, node("p", "empty-note", "정기 업무가 설정되지 않았습니다.")); return; }
+    const names = { dispatching: "업무 배정 중", working: "직원 실행 중", paused: "업무 정지", awaiting_pm: "PM 검토 배정 대기", pm_review: "PM 검토 중", completed: "이번 회차 검토 종료", needs_attention: "막힌 업무 확인 필요" };
+    const cycle = standing.current_cycle;
+    const rows = [node("p", "mini-label", standing.project.name), node("p", "staff-note", `${standing.schedule} · ${standing.paused ? "신규 배정 정지" : "신규 배정 가능"}`)];
+    rows.push(node("p", "staff-note", standing.schedule_registration?.enabled ? "예약 연결됨 · 이 PC와 Codex 앱이 켜져 있어야 실행됩니다." : "예약 실행 연결 전 · 지금 실행 버튼으로 시작할 수 있습니다."));
+    rows.push(node("p", "staff-note", cycle ? `${cycle.date} · ${names[cycle.stage] || cycle.stage}` : "아직 시작한 회차가 없습니다."));
+    for (const duty of standing.duties) {
+      const slot = cycle?.duties[duty.id];
+      const row = append(node("div", "resource-row"), node("span", "", `${employeeName(duty.employee_id)} · ${duty.name}`));
+      if (slot?.mission_id) { const button = node("button", "button", statusLabel(slot.status)); button.type = "button"; button.addEventListener("click", () => openMission(slot.mission_id)); append(row, button); }
+      else append(row, node("strong", "", "배정 전"));
+      rows.push(row);
+    }
+    if (cycle?.pm?.mission_id) { const button = node("button", "button", `PM 통합 검토 · ${statusLabel(cycle.pm.status)}`); button.type = "button"; button.addEventListener("click", () => openMission(cycle.pm.mission_id)); rows.push(button); }
+    if (standing.reason) rows.push(node("p", "staff-note", standing.reason));
+    rows.push(node("p", "staff-note", `현재 실행 단계: ${standing.project.phase}. 3D 완성도·현장 적합성·외부 발행은 별도로 확인합니다.`));
+    for (const [label, path, body] of [["정기 업무 지금 실행", "tick", {}], [standing.paused ? "정기 배정 재개" : "정기 배정 정지", "pause", { paused: !standing.paused }]]) {
+      const button = node("button", "button standing-action", label); button.type = "button";
+      button.disabled = Boolean(state.standingBusy || (path === "tick" && standing.paused));
+      button.addEventListener("click", async () => { state.standingBusy = true; renderStanding(); try { const result = await request(`/api/org/standing/${path}`, body); await loadSnapshot(); toast(result.reason || "정기 업무 상태를 반영했습니다."); } catch (error) { toast(error.message); } finally { state.standingBusy = false; renderStanding(); } });
+      rows.push(button);
+    }
     replace(panel, ...rows);
   }
   function renderEvents() {
@@ -389,7 +421,15 @@
     append(body, append(node("div", "detail-title-row"), title, badge(mission.status, mission.status_label)));
     append(body, append(node("div", "detail-meta"), node("span", "", `담당 ${employeeName(mission.employee_id)}`), node("span", "", `책임 ${employeeName(mission.accountable_id)}`), durationNode(mission), node("span", "", `개입 ${number(mission.intervention_count)}회`)));
     append(body, node("p", "detail-summary", mission.summary || mission.last_activity || "아직 실행 결과가 없습니다."));
+    if (list(mission.next_actions).length) append(body, listSection("다음 단계에서 할 일", mission.next_actions));
     if (mission.project_context) append(body, node("p", "detail-notice", `작업 대상: ${mission.project_context.name}`));
+    if (mission.web_search) append(body, node("p", "detail-notice", `실제 웹 검색 완료 ${number(mission.web_search.completed_count)}회 · 출처 내용과 사업 효과의 검수는 별도입니다.`));
+    if (mission.prototype?.ready && /^\/prototypes\/[a-f0-9]{32}\/$/.test(mission.prototype.preview_url || "")) {
+      const preview = node("a", "button primary", "시뮬레이션 데모 열기 ↗");
+      preview.href = mission.prototype.preview_url; preview.target = "_blank"; preview.rel = "noopener";
+      append(body, preview, node("p", "detail-notice", mission.prototype.browser_verified ? "모델 기본 보존식·경계조건·실제 화면 동작 통과. 현장 적합성과 3D 품질은 별도입니다." : "데모 작업본 · 모델과 화면 검수 확인 필요"));
+      if (list(mission.prototype.browser?.errors).length) append(body, listSection("데모 검사에서 발견한 문제", mission.prototype.browser.errors));
+    }
     if (mission.parent_mission_id) {
       const parentButton = node("button", "button", "PM이 관리하는 전체 업무 보기"); parentButton.type = "button";
       parentButton.addEventListener("click", () => openMission(mission.parent_mission_id));
@@ -472,7 +512,7 @@
     const text = $("intervention-input")?.value || "";
     refreshDetailStatus();
     try {
-      const result = await request(`/api/org/missions/${encodeURIComponent(missionId)}/action`, { action, ...fields, ...(action === "instruct" ? { context: { project_id: "office-ui" } } : {}) });
+      const result = await request(`/api/org/missions/${encodeURIComponent(missionId)}/action`, { action, ...fields, ...(action === "instruct" ? { context: state.detail.mission.project_context || { project_id: "office-ui" } } : {}) });
       if (state.detail?.mission.id === missionId) state.detail = result;
       await loadSnapshot().catch(() => {});
       if (action === "instruct" && $("intervention-input")) $("intervention-input").value = "";
