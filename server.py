@@ -12,7 +12,8 @@ from urllib.parse import unquote, urlsplit
 
 from office.service import Office
 from office.store import Conflict
-from office.report_recovery import recover_future_actions, recover_report_references
+from office.report_recovery import recover_future_actions, recover_report_references, restore_unstarted_report
+from office.prototype_recovery import recover_prototype
 
 ROOT = Path(__file__).resolve().parent
 
@@ -240,8 +241,13 @@ def handler_for(office, organization=None):
                     self.respond(200, organization.standing.register_schedule(body.get("automation_id")))
                 elif organization is not None and path == "/api/org/missions" and write:
                     self.respond(201, organization.submit(body))
+                elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/recheck-prototype", path)):
+                    self.respond(200, recover_prototype(organization, m[1], body.get("review_note"),
+                                                        require_policy_comparison=True))
                 elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/recover-report", path)):
-                    if body.get("kind") == "references":
+                    if body.get("kind") == "restore_unstarted":
+                        result = restore_unstarted_report(organization, m[1], body.get("expected_attempt_id"), body.get("review_note"))
+                    elif body.get("kind") == "references":
                         result = recover_report_references(organization, m[1], body.get("expected_milestones"), body.get("replacements"), body.get("review_note"))
                     elif body.get("kind", "future_actions") == "future_actions":
                         result = recover_future_actions(organization, m[1], body.get("expected_remaining"), body.get("review_note"))
@@ -320,6 +326,8 @@ def main():
     parser = argparse.ArgumentParser(description="DAS Lab AI Office — 로컬 관리자 웹")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
+    parser.add_argument("--extra-runs-today", type=int, choices=range(1, 7), default=0,
+                        help="이번 서버 실행의 오늘(한국 시간)에만 내부 실행 1~6회 추가")
     args = parser.parse_args()
     data_dir = args.data_dir.resolve()
     lock = InstanceLock(data_dir)
@@ -329,11 +337,14 @@ def main():
     try:
         from office.organization import OrganizationEngine
         office = Office(ROOT, data_dir, start_scheduler=False)
-        organization = OrganizationEngine(ROOT, data_dir)
+        organization = OrganizationEngine(ROOT, data_dir, extra_runs_today=args.extra_runs_today)
         server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(office, organization))
         server.daemon_threads = True
         print(f"DAS Lab AI Office: http://127.0.0.1:{args.port}", flush=True)
         print("조직 운영 엔진 · 구독 실행 · 음성은 선택 입력. 종료: Ctrl+C", flush=True)
+        if args.extra_runs_today:
+            print(f"오늘(한국 시간) 내부 실행 {args.extra_runs_today}회 추가 · 총 {organization._daily_limit()}회. "
+                  "이번 서버 실행에만 적용하며 다음 날짜에는 기본 한도로 돌아갑니다.", flush=True)
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
         pass

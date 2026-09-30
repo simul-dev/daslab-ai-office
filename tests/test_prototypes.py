@@ -106,7 +106,7 @@ class PrototypeTests(unittest.TestCase):
         originals = {name: self.file(name).read_text(encoding="utf-8") for name in FILES}
         samples = [("app.js", 'import "https://example.invalid/script.js";'),
                    ("app.js", 'fetch("https://example.invalid/");'),
-                   ("model.test.cjs", 'require("node:fs");'),
+                   ("model.test.cjs", 'require("node:http");'),
                    ("style.css", '@import "https://example.invalid/style.css";'),
                    ("index.html", originals["index.html"].replace('src="model.js"', 'src="https://example.invalid/model.js"')),
                    ("index.html", originals["index.html"].replace("<body>", '<body onclick="alert(1)">'))]
@@ -115,6 +115,55 @@ class PrototypeTests(unittest.TestCase):
                 self.file(name).write_text(value, encoding="utf-8")
                 self.assertFalse(self.proto.finish(self.folder)["ready"])
                 self.file(name).write_text(originals[name], encoding="utf-8")
+
+    def test_sandbox_test_builtin_imports_are_only_syntax_checked(self):
+        import subprocess
+        real = subprocess.run
+        self.file("model.test.cjs").write_text('''"use strict";
+const model = require("./model.js");
+const assert = require('node:assert/strict');
+const fs = require ( "node:fs" );
+const vm = require('node:vm');
+throw new Error("Host must never execute this test file");
+''', encoding="utf-8")
+        with patch("office.prototypes.subprocess.run", wraps=real) as run:
+            result = self.proto.finish(self.folder)
+        self.assertTrue(result["ready"], result)
+        self.assertEqual(len(run.call_args_list), 3)
+        self.assertTrue(all(call.args[0][1] == "--check" for call in run.call_args_list))
+        self.assertFalse(result["model_verified"])
+        self.assertEqual(self.request("/model.test.cjs")[0], 404)
+
+    def test_test_builtin_allowlist_does_not_apply_to_browser_code(self):
+        for name in ("model.js", "app.js"):
+            original = self.file(name).read_bytes()
+            for module in ("./model.js", "node:assert/strict", "node:fs", "node:vm"):
+                with self.subTest(name=name, module=module):
+                    self.file(name).write_text('require("' + module + '");', encoding="utf-8")
+                    with patch("office.prototypes.subprocess.run") as run:
+                        result = self.proto.finish(self.folder)
+                    self.assertFalse(result["ready"])
+                    run.assert_not_called()
+            self.file(name).write_bytes(original)
+
+    def test_test_imports_reject_dynamic_external_and_network_access(self):
+        snippets = [
+            'require("node:http");', 'require("node:child_process");',
+            'require("node:fs/promises");', 'require("fs");',
+            'require("./app.js");', 'require("some-package");',
+            'const name="node:fs"; require(name);',
+            'require(`node:fs`);', 'require("node:" + "fs");',
+            'const load = require; load("node:fs");',
+            'require("node:fs", "extra");', 'import fs from "node:fs";',
+            'require("node:fs"); fetch("https://example.invalid/");',
+        ]
+        for script in snippets:
+            with self.subTest(script=script):
+                self.file("model.test.cjs").write_text(script, encoding="utf-8")
+                with patch("office.prototypes.subprocess.run") as run:
+                    result = self.proto.finish(self.folder)
+                self.assertFalse(result["ready"], result)
+                run.assert_not_called()
 
     def test_invalid_js_and_unavailable_parser_block(self):
         self.file("app.js").write_text("function broken(")

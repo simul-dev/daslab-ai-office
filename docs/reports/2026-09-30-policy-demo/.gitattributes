@@ -1,0 +1,3 @@
+marketing.md -text whitespace=cr-at-eol
+sales.md -text whitespace=cr-at-eol
+pm-review.md -text whitespace=cr-at-eol

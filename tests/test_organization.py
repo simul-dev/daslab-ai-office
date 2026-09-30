@@ -211,6 +211,22 @@ class OrganizationTests(unittest.TestCase):
             self.assertEqual(self.worker.calls, [])
             self.assertNotIn("synthetic-test-only", json.dumps(self.engine.snapshot()))
 
+    def test_daily_capped_resume_preserves_review_result_and_history(self):
+        self.engine.config["daily_runs"] = 1
+        mission_id = self.submit()
+        self.await_status(mission_id, {"review"})
+        with self.engine.lock:
+            original = self.engine._get("missions", mission_id)
+            attempts = self.engine._attempts(mission_id)
+        revision = self.engine.snapshot()["revision"]
+        with self.assertRaisesRegex(Conflict, "기존 결과와 상태"):
+            self.engine.action(mission_id, {"action": "resume"})
+        with self.engine.lock:
+            self.assertEqual(self.engine._get("missions", mission_id), original)
+            self.assertEqual(self.engine._attempts(mission_id), attempts)
+        self.assertEqual(self.engine.snapshot()["revision"], revision)
+        self.assertEqual(len(self.worker.calls), 1)
+
     def test_reopen_keeps_memory_and_recovers_unknown_duration_without_reexecution(self):
         self.worker.available = False
         mission_id = self.submit()

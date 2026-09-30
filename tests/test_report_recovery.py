@@ -6,9 +6,10 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from office.providers import CodeReviewer
-from office.report_recovery import recover_future_actions, recover_report_references
+from office.report_recovery import recover_future_actions, recover_report_references, restore_unstarted_report
 from office.worker import render_report
 
 
@@ -253,6 +254,125 @@ class ReportReferenceRecoveryTests(unittest.TestCase):
         (self.folder / "result.json").write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "최초 검증 이후 변경"):
             self.recover()
+
+
+class ReportRestorationTests(unittest.TestCase):
+    write_original = ReportRecoveryTests.write_original
+    originals = ReportRecoveryTests.originals
+    daily_reason = "내부 일일 실행 제한에 도달했습니다. 한도를 확인한 뒤 직접 재개하세요. 유료 API로 전환하지 않습니다."
+
+    def setUp(self):
+        ReportRecoveryTests.setUp(self)
+        self.engine.db.execute("CREATE TABLE events(id INTEGER PRIMARY KEY, data TEXT)")
+        recover_future_actions(self.engine, MISSION_ID, FUTURE, "합성 후속 단계 분류 교정")
+        self.defer_report(corrected=True)
+
+    def defer_report(self, corrected):
+        from office.standing import StandingOperations
+        with self.engine.db:
+            attempt = self.engine._get("attempts", ATTEMPT_ID)
+            attempt.update(started_at="2026-09-30T17:00:00+09:00", ended_at="2026-09-30T17:05:00+09:00")
+            if not corrected:
+                attempt["status"] = "completed"
+            self.engine._save("attempts", attempt)
+            mission = self.engine._get("missions", MISSION_ID)
+            if not corrected:
+                mission.update(result=copy.deepcopy(self.document), status="review", verification="structural_only", error=None)
+            mission["instructions"] = []
+            self.engine._save("missions", mission)
+            self.standing = object.__new__(StandingOperations)
+            self.standing.engine = self.engine
+            self.cycle = {"duties": {"simulation-research": {"mission_id": MISSION_ID}}}
+            self.original_basis = self.standing._basis(self.cycle)
+            self.expected = copy.deepcopy(mission["result"])
+            mission.update(previous_result=mission.pop("result"), result=None, status="deferred", error=self.daily_reason,
+                           verification="not_verified", ended_at=None)
+            self.engine._save("missions", mission)
+            self.engine.db.execute("DELETE FROM events")
+            for index, (kind, stamp, message) in enumerate([
+                    ("report.corrected" if corrected else "execution.review", "17:06:00", "Original report ready"),
+                    ("owner.resume", "17:10:00", "Resume"), ("execution.deferred", "17:10:01", self.daily_reason)], 1):
+                event = {"id": index, "mission_id": MISSION_ID, "type": kind,
+                         "created_at": "2026-09-30T" + stamp + "+09:00", "message": message}
+                self.engine.db.execute("INSERT INTO events VALUES(?,?)", (index, json.dumps(event)))
+
+    def restore(self, **changes):
+        args = {"engine": self.engine, "mission_id": MISSION_ID, "expected_attempt_id": ATTEMPT_ID,
+                "review_note": "시작하지 못한 중복 실행 요청을 철회하고 동일한 검증 보고서를 복원합니다."}
+        args.update(changes)
+        return restore_unstarted_report(**args)
+
+    def test_corrected_report_restores_identical_basis_without_attempt_or_file_changes(self):
+        files, attempt = self.originals(), self.engine._get("attempts", ATTEMPT_ID)
+        self.assertNotEqual(self.standing._basis(self.cycle), self.original_basis)
+        result = self.restore()
+        mission = self.engine._get("missions", MISSION_ID)
+        self.assertEqual(mission["result"], self.expected)
+        self.assertEqual(result["status"], "review")
+        self.assertEqual(mission["verification"], "structural_only")
+        self.assertEqual(self.standing._basis(self.cycle), self.original_basis)
+        self.assertEqual(self.engine._get("attempts", ATTEMPT_ID), attempt)
+        self.assertEqual(self.originals(), files)
+        self.assertEqual(result["report_restoration"]["withdrawn_event_ids"], [2, 3])
+        self.assertEqual(self.engine.events[-1][0], "report.restored")
+        with self.assertRaises(ValueError):
+            self.restore()
+
+    def test_uncorrected_passed_report_and_partial_claims_are_preserved(self):
+        self.document["outcome"] = {"status": "partial", "progress_percent": None, "basis": "불확실한 고객 효과"}
+        self.document["evidence"][0]["status"] = "unknown"
+        self.document["remaining"] = ["고객 효과 검증"]
+        self.write_original()
+        self.defer_report(corrected=False)
+        self.restore()
+        self.assertEqual(self.engine._get("missions", MISSION_ID)["result"], self.document)
+        self.assertEqual(self.standing._basis(self.cycle), self.original_basis)
+
+    def test_changed_previous_result_instruction_and_wrong_latest_attempt_are_denied(self):
+        original = self.engine._get("missions", MISSION_ID)
+        for changes in ({"previous_result": {"summary": "changed"}}, {"instructions": [{"text": "추가 업무"}]},
+                        {"status": "queued"}, {"error": "다른 사유"}):
+            with self.engine.db:
+                self.engine._save("missions", {**original, **changes})
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.restore()
+        with self.engine.db:
+            self.engine._save("missions", original)
+            latest = self.engine._get("attempts", ATTEMPT_ID)
+            latest["id"] = "c" * 32
+            self.engine._save("attempts", latest)
+        with self.assertRaisesRegex(ValueError, "새 실행"):
+            self.restore()
+
+    def test_new_execution_or_other_intervention_events_are_denied(self):
+        for kind in ("execution.started", "owner.instruct", "owner.reassign", "owner.cancel"):
+            event = {"id": 4, "mission_id": MISSION_ID, "type": kind, "created_at": "2026-09-30T17:11:00+09:00"}
+            with self.engine.db:
+                self.engine.db.execute("INSERT OR REPLACE INTO events VALUES(4,?)", (json.dumps(event),))
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.restore()
+
+    def test_modified_original_or_corrected_artifact_is_denied(self):
+        correction = self.engine._get("attempts", ATTEMPT_ID)["report_correction"]
+        for path in (self.folder / "report.md", Path(correction["path"]) / "report.md"):
+            before = path.read_bytes()
+            path.write_bytes(before + b"changed")
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "변경"):
+                self.restore()
+            path.write_bytes(before)
+
+    def test_corrected_execution_changed_during_validation_is_denied(self):
+        correction = self.engine._get("attempts", ATTEMPT_ID)["report_correction"]
+        target = Path(correction["path"]) / "execution.json"
+        original_review = CodeReviewer.review
+        def mutate(reviewer, *args):
+            result = original_review(reviewer, *args)
+            target.write_bytes(target.read_bytes() + b"\n ")
+            return result
+        with patch.object(CodeReviewer, "review", mutate):
+            with self.assertRaisesRegex(ValueError, "검사 도중"):
+                self.restore()
+        self.assertEqual(self.engine._get("missions", MISSION_ID)["status"], "deferred")
 
 
 if __name__ == "__main__":

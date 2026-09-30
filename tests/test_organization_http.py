@@ -11,7 +11,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from office.organization import OrganizationEngine
 from server import handler_for
@@ -100,11 +100,40 @@ class OrganizationHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200, result)
         return result
 
+    def test_prototype_recheck_is_protected_post_and_requires_policy_evidence(self):
+        mission_id = "a" * 32
+        path = f"/api/org/missions/{mission_id}/recheck-prototype"
+        with patch("server.recover_prototype", return_value={"passed": True}) as recover:
+            status, _, _ = self.request(path, "POST",
+                                        headers={"X-DAS-Office": ""})
+            self.assertEqual(status, 403)
+            recover.assert_not_called()
+            status, _, result = self.request(path, "POST", {"review_note": "재검수 근거",
+                                                            "require_policy_comparison": False})
+            self.assertEqual(status, 200)
+            self.assertTrue(result["passed"])
+            recover.assert_called_once_with(self.organization, mission_id, "재검수 근거",
+                                            require_policy_comparison=True)
+
     def create(self, request_id="test-request", text="공급망 데모의 개선 방향을 요약해 줘", employee_id="assistant"):
         status, _, result = self.request("/api/org/missions", "POST",
                                         {"request_id": request_id, "text": text, "employee_id": employee_id})
         self.assertIn(status, (200, 201), result)
         return result
+
+    def test_unstarted_report_restore_uses_reviewed_attempt_and_note(self):
+        mission_id, attempt_id = "a" * 32, "b" * 32
+        path = f"/api/org/missions/{mission_id}/recover-report"
+        with patch("server.restore_unstarted_report", return_value={"restored": True}) as restore:
+            status, _, _ = self.request(path, "POST", headers={"X-DAS-Office": ""})
+            self.assertEqual(status, 403)
+            restore.assert_not_called()
+            status, _, result = self.request(path, "POST", {"kind": "restore_unstarted",
+                "expected_attempt_id": attempt_id, "review_note": "실행되지 않은 중복 재개 철회"})
+            self.assertEqual(status, 200)
+            self.assertTrue(result["restored"])
+            restore.assert_called_once_with(self.organization, mission_id, attempt_id,
+                                            "실행되지 않은 중복 재개 철회")
 
     def detail(self, mission_id):
         status, _, result = self.request(f"/api/org/missions/{mission_id}")

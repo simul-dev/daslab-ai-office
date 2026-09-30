@@ -1,0 +1,172 @@
+{
+  "format_version": 1,
+  "source_attempt_id": "0a5c2a4acdd443f2bb985478833c4a59",
+  "source_recheck_id": "9a3d1d2fb2c0452a8ed22afc3211924c",
+  "source_sha256": {
+    "app.js": "7a86066b28ae43f96bdde763ac146b8a8dc15028560444b0b5f313781d217376",
+    "index.html": "f6c6cae70e3ea5311df6469ad13e3acaa3df3fbf35f7b430dbbfef5ec93c1f25",
+    "model.js": "2c1fda70105d4df7d747d1b026f7bdd021b8bcf751df9da5287281e797971f5f",
+    "model.test.cjs": "0a9cb9e2911597f858137d2a0d26dba3dfd8d2503d1ec497890ea439089fabbc",
+    "README.md": "09eb1f56f9a4a42a88c3e81dfcd1fdcbb36a911273d96d3d00194d730f2788fe",
+    "style.css": "9b5f789ef5668d8fd66a05eec895603e2488c6ee47c58d1a8a9d4549fc3fe513"
+  },
+  "copy_method": "검증한 원본 6개 파일을 바이트 그대로 복사. README의 개발 당시 자체 검수 기록을 수정하지 않음.",
+  "verification": {
+    "completed_at": "2026-09-30T18:24:01.902609+09:00",
+    "status": "passed",
+    "check_count": 32,
+    "checks": [
+      {
+        "name": "동일 입력 재현성 1",
+        "status": "passed"
+      },
+      {
+        "name": "재고 보존 1",
+        "status": "passed"
+      },
+      {
+        "name": "주문 보존 1",
+        "status": "passed"
+      },
+      {
+        "name": "수요 건수 1",
+        "status": "passed"
+      },
+      {
+        "name": "음수·비유한 값 없음 1",
+        "status": "passed"
+      },
+      {
+        "name": "동일 입력 재현성 42",
+        "status": "passed"
+      },
+      {
+        "name": "재고 보존 42",
+        "status": "passed"
+      },
+      {
+        "name": "주문 보존 42",
+        "status": "passed"
+      },
+      {
+        "name": "수요 건수 42",
+        "status": "passed"
+      },
+      {
+        "name": "음수·비유한 값 없음 42",
+        "status": "passed"
+      },
+      {
+        "name": "동일 입력 재현성 987",
+        "status": "passed"
+      },
+      {
+        "name": "재고 보존 987",
+        "status": "passed"
+      },
+      {
+        "name": "주문 보존 987",
+        "status": "passed"
+      },
+      {
+        "name": "수요 건수 987",
+        "status": "passed"
+      },
+      {
+        "name": "음수·비유한 값 없음 987",
+        "status": "passed"
+      },
+      {
+        "name": "수요 0",
+        "status": "passed"
+      },
+      {
+        "name": "공급 0",
+        "status": "passed"
+      },
+      {
+        "name": "용량 증가 시 처리 증가",
+        "status": "passed"
+      },
+      {
+        "name": "정책 원시 기록·보존식·KPI·비용 재계산 baseline",
+        "status": "passed"
+      },
+      {
+        "name": "정책 원시 기록·보존식·KPI·비용 재계산 repeat",
+        "status": "passed"
+      },
+      {
+        "name": "정책 원시 기록·보존식·KPI·비용 재계산 no_emergency",
+        "status": "passed"
+      },
+      {
+        "name": "정책 원시 기록·보존식·KPI·비용 재계산 no_safety",
+        "status": "passed"
+      },
+      {
+        "name": "정책 원시 기록·보존식·KPI·비용 재계산 no_demand",
+        "status": "passed"
+      },
+      {
+        "name": "정책 비교 같은 입력 재현성",
+        "status": "passed"
+      },
+      {
+        "name": "비교 정책 변경에도 같은 외생 수요·충격",
+        "status": "passed"
+      },
+      {
+        "name": "대응 기능 0이면 기준 정책과 동일 no_emergency",
+        "status": "passed"
+      },
+      {
+        "name": "대응 기능 0이면 기준 정책과 동일 no_safety",
+        "status": "passed"
+      },
+      {
+        "name": "기본 합성 조건에서 실제 긴급 전환 발생",
+        "status": "passed"
+      },
+      {
+        "name": "정책 비교 화면과 실제 집계 일치",
+        "status": "passed"
+      },
+      {
+        "name": "화면 입력이 모델 결과에 반영",
+        "status": "passed"
+      },
+      {
+        "name": "desktop 가로 넘침 없음",
+        "status": "passed"
+      },
+      {
+        "name": "mobile 가로 넘침 없음",
+        "status": "passed"
+      }
+    ],
+    "policy_scenarios": [
+      "baseline",
+      "repeat",
+      "no_emergency",
+      "no_safety",
+      "no_demand"
+    ],
+    "scope": "서버 독립 재계산으로 합성 모델의 재고·주문 보존, 예약 이중 차감, 긴급 전환 중복 입고, OTIF·보유비·운송비·발주비, 같은 조건 재현성과 0 경계 조건을 검사. 실제 격리 브라우저에서 화면 집계·입력 반영과 PC/모바일 가로 넘침을 검사.",
+    "generated_test_execution": "호스트에서는 생성된 model.test.cjs를 실행하지 않고 node --check로 문법만 검사함."
+  },
+  "manual_browser_check": {
+    "date": "2026-09-30",
+    "source": "supervisor_observation",
+    "observations": [
+      "사용자 브라우저에서 긴급 용량을 0으로 바꿔 P2와 P0의 동일 결과를 확인함.",
+      "기준 입력 복원과 가정 펼치기 동작을 확인함."
+    ]
+  },
+  "limitations": [
+    "단일 품목·주문당 1개·14일 기준의 합성 데모이며 실고객 데이터 보정이나 산업적 효과를 검증하지 않음.",
+    "P2는 지연 예고가 있는 발주 일부를 긴급 전환하며 발주 시 지연을 안다는 가정을 사용함. 재고 부족 예측 최적 정책을 구현한 것은 아님.",
+    "예약 후 피킹·배송 용량은 무제한이고 CU는 합성 비용 단위임.",
+    "3D·외부 홈페이지 반영·공개 배포·고객 성과·PM 최종 수용을 이 복사나 32개 검사로 주장하지 않음."
+  ]
+}

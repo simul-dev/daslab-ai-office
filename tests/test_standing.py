@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from office.standing import StandingOperations, STATE_KEY
 
@@ -44,6 +45,9 @@ class FakeEngine:
 
     def _daily_used(self):
         return self.used
+
+    def _daily_limit(self):
+        return self.config["daily_runs"]
 
     def _event(self, *args):
         self.events.append(args)
@@ -333,6 +337,16 @@ class StandingTests(unittest.TestCase):
         self.assertEqual(self.standing.tick(DAY)["submitted"], [])
         self.assertTrue(self.engine._quota_blocked)
         self.assertEqual(self.engine.calls, [])
+
+    def test_capacity_uses_effective_limit_and_keeps_queue_reservations(self):
+        self.engine.used = 15
+        with patch.object(self.engine, "_daily_limit", return_value=16):
+            snapshot = self.standing.tick(DAY)
+            self.assertEqual(len(snapshot["submitted"]), 1)
+            self.assertEqual(self.standing.tick(DAY)["submitted"], [])
+            self.assertEqual(self.standing._capacity()[0], 0)
+        self.assertEqual(self.engine.config["daily_runs"], 10)
+        self.assertEqual(self.standing._capacity()[0], 0)
 
     def test_queue_reservations_prevent_partial_capacity_overbooking(self):
         self.engine.used = 8

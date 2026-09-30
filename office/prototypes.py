@@ -244,7 +244,10 @@ class PrototypeWorkspace:
             for name in ("model.js", "app.js", "model.test.cjs"):
                 script = files[name].decode("utf-8")
                 if name == "model.test.cjs":
-                    script = re.sub(r"\brequire\(\s*[\"']\./model\.js[\"']\s*\)", "", script)
+                    # These exact local/builtin imports support worker-sandbox
+                    # assertions and DOM stubs. This file is never served or
+                    # executed by the host; finish only runs node --check.
+                    script = re.sub(r"\brequire\s*\(\s*(['\"])(?:\./model\.js|node:assert/strict|node:fs|node:vm)\1\s*\)", "", script)
                 if re.search(r"\b(?:import|require|fetch|XMLHttpRequest|WebSocket|EventSource|importScripts)\b|\b(?:sendBeacon|serviceWorker)\b", script):
                     raise ValueError("Network access and external code imports are not allowed")
             checks.append("Six bounded UTF-8 files; no links, reparse points, external references or imports")

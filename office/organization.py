@@ -45,6 +45,10 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _today_kst():
+    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+
+
 def _id():
     return uuid.uuid4().hex
 
@@ -76,7 +80,13 @@ def _text(payload, key="text", limit=6000):
 
 
 class OrganizationEngine:
-    def __init__(self, root, data_dir, worker=None, reviewer=None):
+    def __init__(self, root, data_dir, worker=None, reviewer=None, *, extra_runs_today=0):
+        if type(extra_runs_today) is not int or not 0 <= extra_runs_today <= 6:
+            raise ValueError("extra_runs_today must be an integer from 0 to 6")
+        # Startup-only allowance: never persisted as a setting or carried into
+        # another Korean calendar day (or a restart without the explicit flag).
+        self._extra_runs_today = extra_runs_today
+        self._extra_runs_date = _today_kst()
         self.root, self.data_dir = Path(root), Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.config = json.loads((self.root / "config/office.json").read_text(encoding="utf-8"))
@@ -124,6 +134,12 @@ class OrganizationEngine:
         with self.db:
             self._seed()
             self._recover()
+            if extra_runs_today:
+                with self.lock:
+                    self._event("execution.daily_allowance",
+                                f"이번 서버 실행의 {self._extra_runs_date}(한국 시간)에 내부 실행 {extra_runs_today}회를 추가했습니다. "
+                                f"오늘 한도 {self._daily_limit()}회이며 다음 날짜부터 기본 {self.config['daily_runs']}회입니다. "
+                                "구독 한도와 미션별 재시도 제한은 유지합니다.")
         self._dispatcher = threading.Thread(target=self._dispatch, name="organization-dispatch", daemon=True)
         self._dispatcher.start()
 
@@ -464,6 +480,8 @@ class OrganizationEngine:
                     self._require_researcher(mission["employee_id"])
                 if mission.get("execution_mode") == "prototype":
                     self._require_prototyper(mission["employee_id"])
+                if mission.get("result") and mission.get("execution_mode") != "delivery" and self._daily_used() >= self._daily_limit():
+                    raise Conflict("내부 일일 실행 제한에 도달해 재개하지 않았습니다. 기존 결과와 상태는 유지합니다.")
                 mission.update(status="queued", error=None, ended_at=None, pending_action=None)
                 self._set_quota_blocked(False)
                 if mission.get("result"):
@@ -544,6 +562,10 @@ class OrganizationEngine:
 
     def _memories(self, employee_id, limit=12):
         return [json.loads(row[0]) for row in self.db.execute("SELECT data FROM memories WHERE employee_id=? ORDER BY created_at DESC,id DESC LIMIT ?", (employee_id, limit))]
+
+    def _daily_limit(self):
+        extra = self._extra_runs_today if _today_kst() == self._extra_runs_date else 0
+        return self.config["daily_runs"] + extra
 
     def _daily_used(self):
         midnight = datetime.now(timezone(timedelta(hours=9))).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -648,7 +670,7 @@ class OrganizationEngine:
             return {"revision": self._revision, "employees": employees, "missions": missions[:100], "events": events,
                     "standing": standing, "primary_contact_id": "das-pm" if standing["enabled"] else "assistant",
                     "execution": {"provider": "codex", "billing": "subscription", "concurrency_limit": 1,
-                                  "active_count": active, "queued_count": queued, "daily_limit": self.config["daily_runs"],
+                                  "active_count": active, "queued_count": queued, "daily_limit": self._daily_limit(),
                                   "active_employee_id": self._active["employee_id"] if self._active else None,
                                   "daily_used": self._daily_used(), "remaining_quota": None,
                                   "quota_message": "구독 잔여량은 미확인입니다. 일일 제한은 내부 실행 횟수(한국 시간)이며 구독 잔여량이 아닙니다.",
@@ -891,7 +913,7 @@ class OrganizationEngine:
                 self._defer(mission, self.connection["message"])
                 return
             attempts = self._attempts(mission_id)
-            if self._daily_used() >= self.config["daily_runs"]:
+            if self._daily_used() >= self._daily_limit():
                 self._defer(mission, "내부 일일 실행 제한에 도달했습니다. 한도를 확인한 뒤 직접 재개하세요. 유료 API로 전환하지 않습니다.")
                 return
             if len(attempts) >= self.config["max_attempts"]:
@@ -932,12 +954,12 @@ class OrganizationEngine:
             folder.mkdir(parents=True, exist_ok=False)
             if prototype:
                 with self.lock:
-                    previous = sorted([a for a in self._all("attempts") if (a.get("prototype") or {}).get("ready")],
+                    previous = sorted([a for a in self._all("attempts") if self._prototype_receipt(a).get("ready")],
                                       key=lambda a: a["started_at"], reverse=True)
                 previous_folder = self.data_dir / "organization-runs" / previous[0]["id"] if previous else None
                 if previous:
                     checked = self.prototypes.finish(previous_folder)
-                    if checked.get("artifacts") != previous[0]["prototype"]["artifacts"]:
+                    if checked.get("artifacts") != self._prototype_receipt(previous[0])["artifacts"]:
                         raise ValueError("이전 데모 파일이 검증 후 달라졌습니다.")
                 context["prototype"] = self.prototypes.prepare(folder, previous_folder)
             if development:
@@ -1132,10 +1154,17 @@ class OrganizationEngine:
             folder = self.data_dir / "organization-runs" / attempt_id
         return self.development.open_preview(folder, self.snapshot, expected_artifacts=attempt["delivery"]["artifacts"])
 
+    @staticmethod
+    def _prototype_receipt(attempt):
+        recheck = attempt.get("prototype_reverification") or {}
+        if recheck.get("passed") is True:
+            return recheck.get("prototype") or {}
+        return attempt.get("prototype") or {}
+
     def prototype_preview(self, attempt_id):
         with self.lock:
             attempt = self._get("attempts", attempt_id)
-            receipt = attempt.get("prototype") or {}
+            receipt = self._prototype_receipt(attempt)
             if not receipt.get("ready"):
                 raise KeyError(attempt_id)
         return self.prototypes.open_preview(self.data_dir / "organization-runs" / attempt_id, expected_artifacts=receipt["artifacts"])

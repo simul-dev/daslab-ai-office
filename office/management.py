@@ -248,7 +248,7 @@ class PMWorkflow:
                 return
             decision_step = stage != 'checking'
             if decision_step:
-                if e._quota_blocked or e._daily_used() >= e.config['daily_runs']:
+                if e._quota_blocked or e._daily_used() >= e._daily_limit():
                     self.block(parent, '구독 사용량 또는 내부 일일 실행 한도로 기다리고 있습니다.', 'deferred')
                     return
                 if flow['decision_count'] >= 2 * flow['max_revisions'] + 4:

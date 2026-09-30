@@ -1,0 +1,7 @@
+# Preserve the exact bytes covered by provenance.json hashes.
+README.md -text whitespace=cr-at-eol
+index.html -text whitespace=cr-at-eol
+style.css -text whitespace=cr-at-eol
+model.js -text whitespace=cr-at-eol
+app.js -text whitespace=cr-at-eol,-blank-at-eof
+model.test.cjs -text whitespace=cr-at-eol

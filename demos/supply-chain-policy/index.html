@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DAS Lab · 공급망 DES 초안</title><link rel="stylesheet" href="style.css">
+<script src="model.js" defer></script><script src="app.js" defer></script></head>
+<body><header><strong>DAS Lab</strong><span>공급망 DES · 분리된 연구 초안</span></header>
+<main><h1>입고 지연, 어떤 재고 정책을 선택할까요?</h1>
+<p>14일 단일품목 합성 배송 계산 · 정책별 비용과 납기 비교 · 자체 검사 단계</p>
+<section aria-labelledby="policy-title"><h2 id="policy-title">동일 조건의 세 정책 비교</h2>
+<form id="policy-form"><fieldset><legend>비교 입력 (모두 정수)</legend>
+<label>기간 (1–30일)<input id="policy-days" name="days" type="number" min="1" max="30" value="14" required></label>
+<label>하루 주문 (0–100건)<input id="policy-orders" name="ordersPerDay" type="number" min="0" max="100" value="6" required></label>
+<label>초기 물리재고 (0–10000개)<input id="policy-stock" name="initialStock" type="number" min="0" max="10000" value="12" required></label>
+<label>공통 시드 (1–999999)<input id="policy-seed" name="seed" type="number" min="1" max="999999" value="42" required></label>
+<label>P1 추가 안전재고 (0–10일분)<input id="policy-safety" name="safetyStockDays" type="number" min="0" max="10" value="2" required></label>
+<label>P2 일일 긴급 용량 (0–100개)<input id="policy-emergency" name="emergencyCapacity" type="number" min="0" max="100" value="6" required></label>
+</fieldset><button id="run-policies" type="submit">세 정책 비교 실행</button> <button id="reset-policies" type="button">기준 입력 복원</button></form>
+<p>P0: 3일 수요 목표 · P1: 기본 목표 + 추가 안전재고 · P2: 기본 목표 유지, 지연이 예고된 기존 발주 일부를 출발 전 긴급 전환. 초기 물리재고는 동일합니다.</p>
+<div id="policy-comparison" aria-live="polite"></div>
+<h3>정책별 기말 주문 상태 · 2D</h3><p>완료 / 배송 중 / 예약·피킹 / 미예약 대기 순서입니다. 아래 기존 피킹 모형과 별도 계산입니다.</p><div id="policy-state"></div>
+<details><summary>가정·단위·계산 근거</summary>
+<p>주문당 1개, 도착 후 2일 이내 배송 완료가 납기 준수입니다. 예약 후 0.25일에 출하, 출하 후 0.5일에 배송합니다. 피킹·배송 용량은 무제한입니다. 매일 시각 0부터 재고위치를 검토해 목표 부족량을 발주합니다.</p>
+<p>정규 출발: 발주 +0.5일, 입고: 발주 +2일 + 공통 지연. 시각 2–7일 발주는 3일 지연, 나머지는 별도 시드 난수로 0 또는 1일 지연입니다. 긴급 출발 +0.25일, 입고 +1일. 지연을 발주 시 알고 있다는 합성 가정입니다.</p>
+<p>물리재고는 예약분을 포함합니다. 재고위치 = 물리재고 − 예약 + 미입고 발주 − 미예약 대기. 보유비 0.1 CU/(개·일), 정규 운송 1 CU/개, 긴급 운송 4 CU/개, 발주비 2 CU/건. CU는 합성 비용 단위이며 원화가 아닙니다. 운송비는 기간 밖 미입고도 발주 시 부과합니다.</p>
+<p>OTIF = 기한 내 배송 완료 / 전체 유입 (미완료 포함, 무수요 0). 평균 소요일은 완료 주문만 집계합니다. 보유비는 예약분을 포함하는 물리재고 시간적분입니다. 수요·지연은 정책 행동과 독립 생성됩니다. 실제 고객 성과·영업 납기 약속·3D·현장 적합성을 입증하지 않습니다.</p>
+</details>
+<details><summary>전체 원시 추적 펼치기 (입력·수요·지연·주문·발주·입고·상태·비용)</summary><pre id="policy-trace"></pre></details>
+<button id="check-policies" type="button">정책 자체 검사 재실행</button><p>기준 시나리오·0 경계 조건 자체 검사입니다. 서버 독립 계산 및 브라우저 검증 결과가 아닙니다.</p><ul id="policy-checks" aria-live="polite"></ul>
+</section><h2>기존 재고·피킹 모형 (별도 유지 모형)</h2><p>주문 도착·피킹·재입고를 사건 단위로 계산하는 합성 데모입니다. 실고객 성과나 검증된 운영 모델을 뜻하지 않습니다.</p>
+<form id="model-form"><fieldset><legend>같은 수요 조건에서 대안을 실험하세요</legend>
+<label>관측 기간 (일)<input id="days" name="days" type="number" min="1" max="30" value="7"></label>
+<label>하루 주문 수<input id="orders" name="ordersPerDay" type="number" min="0" max="100" value="12"></label>
+<label>초기 재고<input id="stock" name="initialStock" type="number" min="0" max="10000" value="30"></label>
+<label>재주문 기준<input id="reorder" name="reorderPoint" type="number" min="0" max="10000" value="20"></label>
+<label>보충 수량 (0은 중지)<input id="batch" name="batch" type="number" min="0" max="10000" value="40"></label>
+<label>보충 리드타임 (일)<input id="lead" name="leadTime" type="number" min="0.1" max="30" step="0.1" value="2"></label>
+<label>피킹 인원<input id="servers" name="servers" type="number" min="1" max="20" value="1"></label>
+<label>건당 피킹 시간 (일)<input id="service" name="serviceTime" type="number" min="0.01" max="2" step="0.01" value="0.05"></label>
+<label>수요 난수 시드<input id="seed" name="seed" type="number" min="1" max="999999" value="42"></label>
+</fieldset><button id="run-model" type="submit">시나리오 계산</button></form>
+<section aria-labelledby="results-title"><h2 id="results-title">기존 피킹 모형 결과 · 배송 OTIF 아님</h2><div id="model-results" aria-live="polite"></div>
+<svg id="model-scene" viewBox="0 0 600 140" role="img" aria-label="기말 재고와 주문 상태"><rect x="10" y="20" width="160" height="90" rx="8" fill="#e4f2f2"></rect><rect x="220" y="20" width="160" height="90" rx="8" fill="#e6edf8"></rect><rect x="430" y="20" width="160" height="90" rx="8" fill="#f7eddc"></rect><text x="90" y="53" text-anchor="middle">창고 재고</text><text id="scene-stock" x="90" y="85" text-anchor="middle">—</text><text x="300" y="53" text-anchor="middle">피킹 중</text><text id="scene-active" x="300" y="85" text-anchor="middle">—</text><text x="510" y="53" text-anchor="middle">대기 주문</text><text id="scene-backlog" x="510" y="85" text-anchor="middle">—</text></svg></section>
+<section><h2>초안의 시나리오 검사</h2><p>아래는 모델 코드가 실행한 자체 검사입니다. 독립 검증·현장 데이터 적합성 확인은 별도입니다.</p><ul id="model-checks" aria-live="polite"></ul></section>
+<footer>기존 피킹 모형: 운송·비용 제외 / 새 정책 비교: 합성 배송·비용 포함 · 외부 연결 없음</footer></main></body></html>

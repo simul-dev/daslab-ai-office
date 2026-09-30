@@ -198,7 +198,7 @@ class StandingOperations:
         # not-yet-started queued mission so a tick cannot flood the dispatcher.
         reserved = sum(m.get("status") == "queued" and m.get("execution_mode") not in ("delivery", "browser_check")
                        for m in e._all("missions"))
-        remaining = max(0, e.config["daily_runs"] - e._daily_used() - reserved)
+        remaining = max(0, e._daily_limit() - e._daily_used() - reserved)
         return remaining, None if remaining else "오늘의 실행 한도를 사용했습니다. 새 업무를 쌓지 않고 다음 실행 가능 시점까지 기다립니다."
 
     @staticmethod
