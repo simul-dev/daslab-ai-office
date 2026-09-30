@@ -210,7 +210,8 @@ class DevelopmentWorkspace:
             html = re.sub(r'(<body\b[^>]*>)', lambda m: m[1] + banner, html, count=1, flags=re.I)
             html = re.sub(r'</body\s*>', '<script src="/preview-mode.js"></script></body>', html, count=1, flags=re.I)
             files['office.html'] = html.encode('utf-8')
-            files['office.css'] += b'\n#development-preview-banner{position:relative;z-index:9999;min-height:44px;padding:12px 20px;background:#153d58;color:white;font:600 14px/20px sans-serif;text-align:center} @media(min-width:761px){.sidebar{top:44px}} [aria-disabled="true"]{cursor:not-allowed;opacity:.5}'
+            # Preview chrome must stay below the UI's keyboard skip link (z-index:20).
+            files['office.css'] += b'\n#development-preview-banner{position:relative;z-index:1;min-height:44px;padding:12px 20px;background:#153d58;color:white;font:600 14px/20px sans-serif;text-align:center} @media(min-width:761px){.sidebar{top:44px}} [aria-disabled="true"]{cursor:not-allowed;opacity:.5}'
             files['preview-mode.js'] = PREVIEW_JS.encode('utf-8')
             stop = threading.Event()
             slots = threading.BoundedSemaphore(8)
