@@ -30,12 +30,14 @@ class BrowserVerificationTests(unittest.TestCase):
     def test_only_explicit_loopback_preview_roots_are_accepted(self):
         for url in (URL, 'http://[::1]:54321/'):
             self.assertEqual(_preview_url(url), url)
+        # Inert synthetic credentials: only URL parsing is exercised, never a request.
+        # Keep the loopback-looking username case to reject misleading host prefixes.
         for url in ('https://127.0.0.1:54321/', 'http://localhost:54321/',
                     'http://example.com:54321/', 'http://127.0.0.1/',
                     'http://127.0.0.1:80/', 'http://127.0.0.1:54321/path',
                     URL + '?target=x', URL + '#fragment',
-                    'http://user:secret@127.0.0.1:54321/', 'file:///tmp/index.html',
-                    'http://127.0.0.1:99999/', 'http://127.0.0.1:54321@evil.example/'):
+                    'http://test-user:test-pass@127.0.0.1:54321/', 'file:///tmp/index.html',
+                    'http://127.0.0.1:99999/', 'http://127.0.0.1:test-pass@evil.example/'):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 _preview_url(url)
 
