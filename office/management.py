@@ -185,6 +185,10 @@ class PMWorkflow:
             parent.update(status='queued', error=None, pending_action=None, ended_at=None, result=None)
             if flow.pop('restart_plan', False):
                 flow.update(stage='planning', current_child_id=None, browser_verification=None)
+            elif flow['stage'] == 'reviewing' and parent.get('source_attempt_id'):
+                flow['browser_verification'] = None
+                flow.pop('accepted_source', None)
+                self.history(parent, 'checking', '저장된 작업본을 다시 화면에서 검사한 뒤 PM 검수를 이어갑니다.')
             elif flow['stage'] in ('working', 'delivering') and current:
                 parent['status'] = 'waiting'
                 if current['status'] in ('paused', 'deferred', 'failed', 'blocked'):
@@ -292,13 +296,16 @@ class PMWorkflow:
                     context['source_changes'].append({'file': name, 'current_vs_preview_diff': diff[:18000],
                                                       'truncated': len(diff) > 18000})
                 captures = (flow['browser_verification'] or {}).get('screenshots', [])
-                for capture_name in ('desktop.png', 'mobile.png'):
+                for capture_name in ('desktop.png', 'mobile.png', 'desktop-keyboard.png', 'mobile-keyboard.png'):
                     capture = next((p for p in captures if str(p).replace('\\', '/').endswith('/' + capture_name)), None)
                     if capture:
                         path = _safe(capture, e.data_dir / 'organization-runs')
                         if path.stat().st_size <= 10_000_000:
                             (folder / ('review-' + capture_name)).write_bytes(path.read_bytes())
-                context['review_images'] = '첨부된 이미지는 서버가 방금 검사한 미리보기입니다. 자동 기본 동작 검사와 시각적 판단을 구별하세요.'
+                context['review_images'] = ('첨부된 이미지는 서버가 방금 검사한 미리보기입니다. desktop/mobile은 일반 화면, '
+                                            'desktop-keyboard/mobile-keyboard는 실제 Tab으로 본문 이동 링크에 포커스한 화면입니다. '
+                                            'Enter 후 실제 본문 포커스 이동 여부는 keyboard_desktop/keyboard_mobile 검사 기록을 확인하세요. '
+                                            '자동 기본 동작 검사와 시각적 판단을 구별하세요.')
             (folder / 'input.json').write_text(json.dumps(context, ensure_ascii=False), encoding='utf-8')
             if decision_step:
                 if e._api_environment_present():

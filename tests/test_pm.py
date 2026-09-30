@@ -128,7 +128,8 @@ class DecisionAdapterTests(unittest.TestCase):
         self.assertNotIn("현재 기능은 제공된 자료의 분석과 문서 작성까지", prompt)
 
     def test_review_attaches_only_fixed_server_capture_filenames(self):
-        captures = [self.folder / name for name in ('review-desktop.png', 'review-mobile.png')]
+        captures = [self.folder / name for name in ('review-desktop.png', 'review-mobile.png',
+                                                   'review-desktop-keyboard.png', 'review-mobile-keyboard.png')]
         for capture in captures:
             capture.write_bytes(b'fixture PNG; decoded only by the mocked provider')
         (self.folder / 'other-image.png').write_bytes(b'not a server capture')

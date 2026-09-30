@@ -110,6 +110,58 @@ async def _route_request(route, expected_origin, blocked, http_errors):
         await route.abort('failed')
 
 
+async def _keyboard_skip_link(page, output_dir, receipt, label):
+    """Exercise native Tab/Enter, without programmatically focusing the target."""
+    link = page.locator('a.skip-link[href="#workspace"]')
+    if await link.count() != 1:
+        raise ValueError('Keyboard skip link: expected one a.skip-link[href="#workspace"]')
+    await page.keyboard.press('Tab')
+    # Let the focus-reveal style finish its layout before measuring visibility.
+    await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    focused = await link.evaluate('''(link) => {
+        const rect = link.getBoundingClientRect();
+        const active = document.activeElement;
+        const center = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return {
+            focused: active === link, focusVisible: link.matches(':focus-visible'),
+            visible: link.checkVisibility({checkOpacity: true, checkVisibilityCSS: true}),
+            inViewport: rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0
+                && rect.right <= innerWidth && rect.bottom <= innerHeight,
+            unobscured: center === link || link.contains(center),
+            active: active ? active.tagName.toLowerCase() + (active.id ? '#' + active.id : '') : 'none'
+        };
+    }''')
+    target = output_dir / (label + '-keyboard.png')
+    if target.is_symlink() or target.exists():
+        raise ValueError('Browser evidence file already exists: ' + target.name)
+    await page.screenshot(path=str(target), full_page=False, timeout=5000)
+    receipt['screenshots'].append(str(target))
+    if not focused['focused']:
+        raise ValueError('Keyboard Tab did not focus the skip link; document.activeElement=' + focused['active'])
+    if not focused['focusVisible']:
+        raise ValueError('Keyboard skip link received Tab focus but did not match :focus-visible')
+    for key, description in (('visible', 'visible'), ('inViewport', 'fully inside the viewport'),
+                             ('unobscured', 'unobscured at its center')):
+        if not focused[key]:
+            raise ValueError('Keyboard skip link received Tab focus but was not ' + description)
+    await page.keyboard.press('Enter')
+    try:
+        await page.wait_for_function('document.activeElement === document.querySelector("main#workspace")')
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        active = await page.evaluate('''(() => {
+            const active = document.activeElement;
+            return active ? active.tagName.toLowerCase() + (active.id ? '#' + active.id : '') : 'none';
+        })()''')
+        raise ValueError('Keyboard Enter on the skip link did not move actual focus to main#workspace; '
+                         'document.activeElement=' + active) from exc
+    return (label + ': Actual keyboard Tab focused a.skip-link[href="#workspace"] with :focus-visible=true; '
+            'the link was visible, fully inside the viewport and unobscured. '
+            'Actual keyboard Enter moved document.activeElement to main#workspace; '
+            'no script focus() or click was used.')
+
+
 class BrowserVerifier:
     def __init__(self, timeout_seconds=60, runner=None):
         self.timeout_seconds = max(1, min(float(timeout_seconds), 90))
@@ -122,7 +174,7 @@ class BrowserVerifier:
             'started_at': datetime.now(timezone.utc).isoformat(),
             'artifacts': {}, 'checks': [], 'errors': [], 'screenshots': [],
             'aesthetic_acceptance': False, 'business_acceptance': False,
-            'scope': '읽기 전용 화면 표시·직원 선택·탭·반응형 배치·미션 상세 점검',
+            'scope': '읽기 전용 화면 표시·키보드 본문 이동·직원 선택·탭·반응형 배치·미션 상세 점검',
         }
         try:
             url = _preview_url(url)
@@ -282,6 +334,17 @@ class BrowserVerifier:
                     raise ValueError(f'{label} horizontal overflow: {size}')
                 return f'{width} × {height}: no document horizontal overflow'
 
+            async def keyboard(width, height, label):
+                await page.set_viewport_size({'width': width, 'height': height})
+                # Reload resets the browser's native tab sequence for each size.
+                # Do not synthesize focus: the first real Tab must reach the link.
+                response = await page.goto(url, wait_until='domcontentloaded')
+                if response is None or response.status != 200:
+                    raise ValueError('Keyboard preview did not return HTTP 200')
+                await render()
+                detail = await _keyboard_skip_link(page, output_dir, receipt, label)
+                return f'{width} × {height}; ' + detail
+
             async def mission_detail():
                 await page.locator('#mission-list .mission-row').first.click()
                 await page.locator('#mission-dialog[open] #detail-title').wait_for(state='visible')
@@ -293,9 +356,11 @@ class BrowserVerifier:
 
             await check('organization_render', render)
             await check('images', images)
+            await check('keyboard_desktop', lambda: keyboard(1440, 1000, 'desktop'))
             await check('employee_selection', selection)
             await check('employee_tabs', tabs)
             await check('desktop_layout', lambda: layout(1440, 1000, 'desktop'))
+            await check('keyboard_mobile', lambda: keyboard(390, 844, 'mobile'))
             await check('mobile_layout', lambda: layout(390, 844, 'mobile'))
             if await page.locator('#mission-list .mission-row').count():
                 await check('mission_detail', mission_detail)

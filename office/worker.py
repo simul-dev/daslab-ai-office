@@ -278,7 +278,7 @@ class CodexWorker:
         elif decision_stage == "review":
             # The coordinator copies only its pinned browser captures here.
             # The model cannot request arbitrary local paths as attachments.
-            for name in ("review-desktop.png", "review-mobile.png"):
+            for name in ("review-desktop.png", "review-mobile.png", "review-desktop-keyboard.png", "review-mobile-keyboard.png"):
                 capture = run_dir / name
                 if capture.is_file():
                     if capture.is_symlink() or capture.stat().st_size > 10_000_000:

@@ -428,6 +428,30 @@ class ManagedPMTests(unittest.TestCase):
         self.assertEqual(parent['status'], 'accepted', parent)
         self.assertEqual([context['stage'] for context in self.worker.decision_calls], ['plan', 'plan', 'review'])
 
+    def test_blocked_review_resume_refreshes_browser_evidence_for_same_work(self):
+        self.worker.decisions = ['delegate', 'blocked', 'accept']
+        self.browser.statuses = ['passed', 'passed']
+        mid = self.submit(text='조직 화면을 개선하고 커밋·푸시까지 해줘')
+        parent = self.until(mid)['mission']
+        self.assertEqual(parent['status'], 'blocked', parent)
+        self.assertEqual(parent['workflow']['stage'], 'reviewing')
+        source = parent['source_attempt_id']
+        original_child = parent['workflow']['current_child_id']
+        self.git.deliver.assert_not_called()
+        self.engine.action(mid, {'action': 'resume'})
+        parent = self.until(mid)['mission']
+        self.assertEqual(parent['status'], 'delivered', parent)
+        self.assertEqual(parent['source_attempt_id'], source)
+        self.assertEqual(parent['workflow']['child_ids'][0], original_child)
+        self.assertEqual(len(self.worker.calls), 1)
+        self.assertEqual(len(self.browser.calls), 2)
+        self.assertNotEqual(self.browser.calls[0]['folder'], self.browser.calls[1]['folder'])
+        self.assertEqual([call['stage'] for call in self.worker.decision_calls], ['plan', 'review', 'review'])
+        browser_attempts = [attempt for attempt in self.engine.detail(mid)['attempts']
+                            if attempt['execution_mode'] == 'browser_check']
+        self.assertEqual(len(browser_attempts), 2)
+        self.git.deliver.assert_called_once()
+
     def test_pinned_preview_skips_new_plan_and_is_reviewed_before_delivery(self):
         source = self.fixture.until(self.fixture.submit('das-rd', 'source'), {'review', 'failed'})['mission']
         self.worker.decisions = ['accept']

@@ -6,11 +6,11 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 from office.browser_verification import (
     BrowserUnavailable, BrowserVerifier, _allowed_request, _artifacts,
-    _origin, _preview_url, _route_request,
+    _origin, _preview_url, _route_request, _keyboard_skip_link,
 )
 
 
@@ -193,6 +193,97 @@ class BrowserVerificationTests(unittest.TestCase):
         route.continue_.assert_not_called()
         route.fulfill.assert_not_called()
         self.assertEqual(len(blocked), 1)
+
+    def keyboard_page(self, **state):
+        focused = dict(focused=True, focusVisible=True, visible=True, inViewport=True,
+                       unobscured=True, active='a')
+        focused.update(state)
+        link = SimpleNamespace(count=AsyncMock(return_value=1), evaluate=AsyncMock(return_value=focused))
+        return SimpleNamespace(
+            locator=Mock(return_value=link), keyboard=SimpleNamespace(press=AsyncMock()),
+            evaluate=AsyncMock(), wait_for_function=AsyncMock(), screenshot=AsyncMock(),
+        )
+
+    def keyboard_check(self, page, label='desktop'):
+        self.output.mkdir(exist_ok=True)
+        receipt = {'screenshots': []}
+        detail = asyncio.run(_keyboard_skip_link(page, self.output, receipt, label))
+        return detail, receipt
+
+    def test_keyboard_uses_native_tab_enter_and_saves_focus_evidence_for_both_sizes(self):
+        for label in ('desktop', 'mobile'):
+            page = self.keyboard_page()
+            detail, receipt = self.keyboard_check(page, label)
+            self.assertEqual(page.keyboard.press.await_args_list, [call('Tab'), call('Enter')])
+            page.wait_for_function.assert_awaited_once_with(
+                'document.activeElement === document.querySelector("main#workspace")')
+            page.screenshot.assert_awaited_once_with(
+                path=str(self.output / (label + '-keyboard.png')), full_page=False, timeout=5000)
+            self.assertEqual(receipt['screenshots'], [str(self.output / (label + '-keyboard.png'))])
+            self.assertIn('document.activeElement to main#workspace', detail)
+            self.assertIn(':focus-visible=true', detail)
+            self.assertIn(label, detail)
+
+    def test_keyboard_missing_link_fails_before_any_keypress(self):
+        page = self.keyboard_page()
+        page.locator.return_value.count.return_value = 0
+        with self.assertRaisesRegex(ValueError, 'expected one'):
+            self.keyboard_check(page)
+        page.keyboard.press.assert_not_called()
+
+    def test_keyboard_focus_on_other_element_is_not_a_pass(self):
+        page = self.keyboard_page(focused=False, active='button#tab-work')
+        with self.assertRaisesRegex(ValueError, 'document.activeElement=button#tab-work'):
+            self.keyboard_check(page)
+        page.keyboard.press.assert_awaited_once_with('Tab')
+        page.screenshot.assert_awaited_once()
+
+    def test_keyboard_hidden_offscreen_covered_or_nonvisible_focus_fails_before_enter(self):
+        for key, reason in (('focusVisible', ':focus-visible'), ('visible', 'not visible'),
+                            ('inViewport', 'not fully inside'), ('unobscured', 'not unobscured')):
+            with self.subTest(key=key):
+                page = self.keyboard_page(**{key: False})
+                with self.assertRaisesRegex(ValueError, reason):
+                    self.keyboard_check(page)
+                page.keyboard.press.assert_awaited_once_with('Tab')
+
+    def test_keyboard_enter_must_move_actual_focus_not_just_fragment(self):
+        page = self.keyboard_page()
+        page.wait_for_function.side_effect = TimeoutError('fragment changed but active element stayed')
+        page.evaluate.side_effect = [None, 'body']
+        with self.assertRaisesRegex(ValueError, 'actual focus to main#workspace; document.activeElement=body'):
+            self.keyboard_check(page)
+        self.assertEqual(page.keyboard.press.await_args_list, [call('Tab'), call('Enter')])
+
+    def test_keyboard_focus_wait_cancellation_is_not_rewritten_as_failure(self):
+        page = self.keyboard_page()
+        page.wait_for_function.side_effect = asyncio.CancelledError()
+        with self.assertRaises(asyncio.CancelledError):
+            self.keyboard_check(page)
+
+    def test_keyboard_evidence_never_overwrites_an_existing_file(self):
+        self.output.mkdir()
+        target = self.output / 'desktop-keyboard.png'
+        target.write_bytes(b'existing evidence')
+        page = self.keyboard_page()
+        with self.assertRaisesRegex(ValueError, 'evidence file already exists'):
+            self.keyboard_check(page)
+        page.screenshot.assert_not_called()
+        self.assertEqual(target.read_bytes(), b'existing evidence')
+
+    def test_failed_keyboard_check_is_recorded_as_failed_verification(self):
+        async def runner(url, directory, receipt):
+            page = self.keyboard_page(inViewport=False)
+            try:
+                detail = await _keyboard_skip_link(page, directory, receipt, 'mobile')
+                receipt['checks'].append({'name': 'keyboard_mobile', 'status': 'passed', 'detail': detail})
+            except ValueError as exc:
+                receipt['checks'].append({'name': 'keyboard_mobile', 'status': 'failed', 'detail': str(exc)})
+        result = self.verify(runner)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['checks'][0]['name'], 'keyboard_mobile')
+        self.assertIn('not fully inside the viewport', result['checks'][0]['detail'])
+        self.assertEqual(len(result['screenshots']), 1)
 
 
 if __name__ == '__main__':
