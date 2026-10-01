@@ -46,7 +46,7 @@ class OrganizationDevelopmentTests(unittest.TestCase):
         for folder in ('config', 'knowledge'):
             shutil.copytree(source / folder, self.root / folder)
         (self.root / 'static').mkdir()
-        for name in ('office.html', 'office.css', 'office.js'):
+        for name in ('office.html', 'office.css', 'office.js', 'voice-input.js'):
             shutil.copy2(source / 'static' / name, self.root / 'static' / name)
         self.env = patch.dict(os.environ, {key: '' for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'AZURE_OPENAI_API_KEY')})
         self.env.start()

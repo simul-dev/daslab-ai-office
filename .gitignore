@@ -10,3 +10,8 @@ static/voice/models/
 static/voice/fixtures/
 .npm-cache/
 static/voice/assets-status.json
+config/auth.json
+config/auth.*.local.json
+.env
+.env.*
+!.env.example

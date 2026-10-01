@@ -1,0 +1,6 @@
+{
+  "mode": "pairing",
+  "public_origin": "https://office.example.com",
+  "session_seconds": 2592000,
+  "pairing_seconds": 600
+}

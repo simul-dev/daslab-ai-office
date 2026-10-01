@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from .browser_verification import (BrowserVerifier, BrowserUnavailable, _preview_url,
                                    _origin, _allowed_request, _installed_browser, _output_directory)
+from .process_env import child_env, require_clean_process_env
 
 
 POLICY_INPUT = {"days": 14, "ordersPerDay": 6, "initialStock": 12, "seed": 42,
@@ -303,9 +304,10 @@ class PrototypeVerifier(BrowserVerifier):
         except ImportError:
             raise BrowserUnavailable("격리 브라우저 검증 도구가 필요합니다.") from None
         expected_origin = _origin(url)
+        require_clean_process_env()
         async with async_playwright() as p:
             try:
-                browser = await p.chromium.launch(headless=True, channel=_installed_browser(), timeout=12000,
+                browser = await p.chromium.launch(headless=True, channel=_installed_browser(), timeout=12000, env=child_env(),
                     args=["--disable-background-networking", "--disable-component-update", "--dns-prefetch-disable"])
             except Exception as exc:
                 raise BrowserUnavailable("격리 브라우저 실행 실패: " + str(exc)[:150]) from exc

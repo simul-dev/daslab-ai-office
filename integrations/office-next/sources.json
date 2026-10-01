@@ -1,0 +1,6 @@
+{
+  "paperclip": {"repository":"https://github.com/paperclipai/paperclip","sourceCommit":"467125fafb47a8520856504fecc48d6e32055db1","runtimePackage":"paperclipai","runtimeVersion":"2026.916.1","license":"MIT"},
+  "pixelAgents": {"repository":"https://github.com/pablodelucca/pixel-agents","commit":"3537e140c2094761beae748592aeb92ece8edfdd","license":"MIT; bundled MetroCity characters CC0"},
+  "gstack": {"repository":"https://github.com/garrytan/gstack","commit":"96764e80a641e28141ec8297223768029f5bf483","license":"MIT"},
+  "recordedAt":"2026-10-01"
+}

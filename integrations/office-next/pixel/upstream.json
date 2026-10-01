@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/pixel-agents-hq/pixel-agents",
+  "commit": "3537e140c2094761beae748592aeb92ece8edfdd",
+  "version": "1.4.1",
+  "license": "MIT",
+  "characterOrigin": "https://jik-a-4.itch.io/metrocity-free-topdown-character-pack",
+  "characterLicense": "CC0-1.0",
+  "verifiedOn": "2026-10-01",
+  "notes": "Uses upstream Canvas engine and bundled assets, with no upstream source modifications. No optional paid external asset packs are included."
+}

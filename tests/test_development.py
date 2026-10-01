@@ -60,6 +60,35 @@ class DevelopmentTests(unittest.TestCase):
         self.assertIn('navy', (next_folder / 'workspace/static/office.css').read_text())
         self.assertFalse(self.dev.finish(next_folder)['ready'])
 
+    def test_voice_runtime_is_pinned_read_only_and_inherited_without_new_capabilities(self):
+        html = self.root / 'static/office.html'
+        html.write_text(html.read_text().replace('<script ', '<script src="/voice-input.js" defer></script><script ', 1))
+        runtime = b'"use strict"; globalThis.voiceFixture = true;'
+        (self.root / 'static/voice-input.js').write_bytes(runtime)
+        folder = self.root / 'data/runs/voice'
+        context = self.dev.prepare(folder)
+        self.assertEqual(context['read_only_files'], ['voice-input.js'])
+        (folder / 'workspace/static/office.css').write_text('body { color: navy; }')
+        result = self.dev.finish(folder)
+        self.assertTrue(result['ready'], result)
+        self.assertEqual(result['artifacts']['voice-input.js'], hashlib.sha256(runtime).hexdigest())
+        readonly = folder / 'workspace/static/voice-input.js'
+        readonly.write_bytes(runtime + b'\n// changed')
+        self.assertIn('Read-only runtime changed', self.dev.finish(folder)['error'])
+        readonly.unlink()
+        self.assertFalse(self.dev.finish(folder)['ready'])
+        readonly.write_bytes(runtime)
+        child = self.root / 'data/runs/voice-next'
+        self.dev.prepare(child, folder, allow_unchanged=True)
+        self.assertEqual(self.dev.finish(child)['artifacts'], result['artifacts'])
+        (child / 'workspace/static/inference-worker.js').write_text('"use strict";')
+        self.assertIn('Unexpected workspace file', self.dev.finish(child)['error'])
+
+    def test_readonly_runtime_cannot_be_added_to_a_legacy_workspace(self):
+        self.change()
+        (self.folder / 'workspace/static/voice-input.js').write_text('"use strict";')
+        self.assertIn('Read-only runtime changed', self.dev.finish(self.folder)['error'])
+
     def test_allow_unchanged_inherits_verified_artifacts_and_original_live_baseline(self):
         original_live = (self.root / 'static/office.css').read_bytes()
         original_baseline = json.loads((self.folder / 'development-baseline.json').read_text(encoding='utf-8'))['live_files']
@@ -170,6 +199,15 @@ class DevelopmentTests(unittest.TestCase):
         self.assertIn(b'development-preview-banner', body)
         self.assertIn(b'/preview-mode.js', body)
         self.assertIn("form-action 'none'", headers['Content-Security-Policy'])
+        self.assertIn("worker-src 'none'", headers['Content-Security-Policy'])
+        self.assertIn('microphone=()', headers['Permissions-Policy'])
+        auth = json.loads(self.request('/api/auth')[2])
+        self.assertEqual(auth, {'authenticated': True, 'mode': 'preview', 'read_only': True, 'voice_enabled': False})
+        self.assertNotIn('Set-Cookie', self.request('/api/auth')[1])
+        self.assertEqual(self.request('/auth/github')[0], 404)
+        self.assertEqual(self.request('/voice/inference-worker.js')[0], 404)
+        self.assertEqual(self.request('/api/org/route', 'POST')[0], 405)
+        self.assertIn(b'#voice-toggle', self.request('/preview-mode.js')[2])
         self.assertEqual(self.request('/office.css')[0], 200)
         self.assertEqual(self.request('/brand/logo.svg')[0], 200)
         for path in ('/../development-baseline.json', '/%2e%2e/secret', '/workspace', '/brand/', '/secret.txt', '/api/tasks'):

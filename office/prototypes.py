@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .development import _hash, _safe, _HTML
+from .process_env import child_env
 
 
 FILES = ("README.md", "index.html", "style.css", "model.js", "app.js", "model.test.cjs")
@@ -482,7 +483,7 @@ class PrototypeWorkspace:
             if not node:
                 raise ValueError("Node.js unavailable: syntax inspection cannot run")
             for name in ("model.js", "app.js", "model.test.cjs"):
-                result = subprocess.run([node, "--check", str(folder / "workspace" / name)], capture_output=True, text=True, timeout=20, shell=False)
+                result = subprocess.run([node, "--check", str(folder / "workspace" / name)], capture_output=True, text=True, timeout=20, shell=False, env=child_env())
                 if result.returncode:
                     raise ValueError("Prototype syntax check failed: " + name + " " + result.stderr[:500])
             checks.append("JavaScript syntax parsed with node --check; model tests were NOT executed on host")

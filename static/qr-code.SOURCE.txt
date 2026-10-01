@@ -1,0 +1,9 @@
+Bundled QR generator used by the PC-only pairing control in the AI Office page.
+Project: qrcode-generator by Kazuhiko Arase
+Version: npm qrcode-generator@2.0.4
+Source: https://registry.npmjs.org/qrcode-generator/-/qrcode-generator-2.0.4.tgz
+File in archive: package/dist/qrcode.js
+SHA-256 of static/qr-code.js: 79ec86f82856005b1c887905cfccfcbec3821ca61c7fd5a952faa5f778f791c
+License: MIT; see qr-code.LICENSE in this directory.
+The shared office page loads this local file; only the PC pairing control invokes it.
+It does not call a QR service or CDN.

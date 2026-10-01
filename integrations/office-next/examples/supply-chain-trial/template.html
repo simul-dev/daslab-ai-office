@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>단일 물류거점 비교 · 합성 실험</title>
+<style>
+:root{font:16px/1.6 system-ui,sans-serif;color:#172b40;background:#eef3f7}body{max-width:1150px;margin:auto;padding:28px}h1{margin:0}h2{font-size:20px}p{margin:8px 0 20px}.tag{color:#405871}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card,section{background:white;border:1px solid #cedbe5;border-radius:12px;padding:18px;margin-bottom:18px}.card strong{display:block;font-size:25px;color:#086957}.controls{display:flex;flex-wrap:wrap;gap:18px}select,button,textarea{font:inherit;border:1px solid #8da3b5;border-radius:6px;padding:8px}button{background:#0b6355;color:white;cursor:pointer}button:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #e1a617}table{width:100%;border-collapse:collapse}th,td{text-align:right;padding:10px;border-bottom:1px solid #dde5ea}th:first-child,td:first-child{text-align:left}tr.selected{background:#e3f4ee}.scroll{overflow:auto}textarea{width:100%;box-sizing:border-box;min-height:280px;font:14px/1.5 monospace}#status{padding:12px;border-left:5px solid #16806c;background:white;white-space:pre-wrap}#status.error{border-color:#bc3030;color:#9b2020}svg{width:100%;height:auto;max-height:400px}svg text{font:15px system-ui}#details{white-space:pre-wrap}@media(max-width:750px){body{padding:14px}.cards{grid-template-columns:1fr 1fr}}
+</style></head><body>
+<header><span class="tag">DAS Lab · 내부 합성 실험</span><h1>어느 거점이 수요를 감당하는가?</h1><p>용량을 충족하는 후보의 고정비 + 수요가중 배송비를 전수 비교합니다. 고객 성과가 아니며 비용·수요의 단위와 기간은 미지정입니다.</p></header>
+<div id="status" role="status" aria-live="polite"></div>
+<div class="cards"><div class="card">총수요<strong id="demand">—</strong></div><div class="card">최소비용 적합 후보<strong id="best">—</strong></div><div class="card">최소 총비용<strong id="cost">—</strong></div><div class="card">기준 대비 절감<strong id="savings">—</strong></div></div>
+<section><div class="controls"><label>열람 후보 <select id="selected" aria-label="열람 후보"></select></label><label>비교 기준 (초기 A) <select id="baseline" aria-label="비교 기준"></select></label></div><p>열람 후보를 바꿔도 비교 기준과 최적안은 바뀌지 않습니다. 기준 변경은 아래 입력에도 반영됩니다.</p><div class="scroll"><table><thead><tr><th>후보</th><th>고정비</th><th>배송비</th><th>총비용</th><th>용량</th><th>여유/부족</th><th>판정</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<section><h2>후보와 수요의 합성 연결 도식</h2><p>배치는 경위도를 사용하지 않는 합성 도식입니다. 선은 선택 후보가 전체 수요를 담당하는 가정이며 도로망·거리·GIS 최적화를 뜻하지 않습니다.</p><p id="details"></p><svg id="diagram" viewBox="0 0 900 360" role="img" aria-label="열람 후보와 수요의 합성 연결 도식"></svg></section>
+<section><h2>입력 시나리오</h2><p>수요, 후보별 capacity·fixedCost·unitCosts를 편집한 뒤 적용하세요. 변경 중에는 이전 결과를 숨깁니다. 새로고침하면 원본 합성 입력으로 돌아갑니다.</p><label for="input">JSON 입력</label><textarea id="input" spellcheck="false"></textarea><div class="controls"><button id="apply">입력 적용</button><button id="reset">원본 복원</button></div></section>
+<footer>비용 = fixedCost + Σ(demand × unitCosts). capacity ≥ 총수요만 적합. 동률이면 ID의 코드 단위 오름차순으로 선택합니다. 기준비용 0의 절감률은 산정 불가입니다.</footer>
+<script>
+/* CALCULATION */
+const original = /* INITIAL_INPUT */;
+const $ = id => document.getElementById(id);
+const fmt = n => n === null ? '산정 불가' : new Intl.NumberFormat('ko-KR',{maximumFractionDigits:6}).format(n);
+let current, result, selected;
+const write = (id, value) => { $(id).textContent = value; };
+function clear(message, error = false) {
+  result = null;
+  for (const id of ['demand','best','cost','savings']) write(id,'—');
+  for (const id of ['rows','diagram','details']) write(id,'');
+  for (const id of ['selected','baseline']) { $(id).replaceChildren(); $(id).disabled = true; }
+  write('status',message); $('status').className = error ? 'error' : '';
+}
+function options(id, value) {
+  $(id).replaceChildren(...current.candidates.map(c => new Option(c.id, c.id)));
+  $(id).value = value; $(id).disabled = !current.candidates.length;
+}
+function svg(tag, attrs, text) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg',tag);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k,v);
+  if (text !== undefined) e.textContent = text;
+  $('diagram').append(e);
+}
+function render() {
+  const r = result;
+  write('status', r.status === 'no_feasible' ? '적합 후보 없음: 전체 수요를 처리할 용량이 없습니다.' : `최적 후보 ${r.bestId} · 동률 후보: ${r.tiedIds.join(', ')}`);
+  $('status').className = '';
+  write('demand',fmt(r.totalDemand)); write('best',r.bestId ?? '적합 후보 없음'); write('cost',r.bestCost === null ? '—' : fmt(r.bestCost));
+  write('savings',r.comparable ? `${fmt(r.savings)} / ${r.savingsPercent === null ? '비율 산정 불가' : fmt(r.savingsPercent)+'%'}` : '비교불가');
+  options('selected',selected); options('baseline',current.baseline);
+  $('rows').replaceChildren();
+  for (const c of r.candidates) {
+    const tr = document.createElement('tr'); tr.dataset.id = c.id; if (c.id === selected) tr.className='selected';
+    for (const v of [c.id,fmt(c.fixedCost),fmt(c.shippingCost),fmt(c.totalCost),fmt(c.capacity),fmt(c.slack),c.feasible?'적합':'용량 부족']) { const td=document.createElement('td');td.textContent=v;tr.append(td); }
+    $('rows').append(tr);
+  }
+  $('diagram').replaceChildren();
+  const c = r.candidates.find(c => c.id === selected);
+  write('details',`기준 ${r.baselineId}: ${r.comparable ? '최적안과 비교 가능' : '비교불가 (기준 부적합 또는 적합 후보 없음)'}`);
+  if (!c) return;
+  write('details',$('details').textContent + ` · 열람 ${c.id}: 비용 ${fmt(c.totalCost)}, 용량 ${fmt(c.capacity)}, ${c.feasible?'전체 수요 처리 가능':'용량 부족 — 실행 가능한 배정 아님'}`);
+  const height = Math.max(360,current.demand.length*60+40); $('diagram').setAttribute('viewBox',`0 0 900 ${height}`);
+  current.demand.forEach((d,i) => {
+    const y=40+i*60;
+    svg('line',{x1:200,y1:height/2,x2:640,y2:y,stroke:c.feasible?'#16806c':'#b64a48','stroke-dasharray':c.feasible?'none':'6 5','stroke-width':2});
+    svg('circle',{cx:660,cy:y,r:16,fill:'#e2eaf4'}); svg('text',{x:690,y:y+5},`수요 ${i+1}: ${fmt(d)}`);
+  });
+  svg('circle',{cx:170,cy:height/2,r:40,fill:c.feasible?'#086957':'#a02f39'});
+  svg('text',{x:170,y:height/2+5,'text-anchor':'middle',fill:'white'},c.id);
+  svg('text',{x:15,y:height/2+70},`총수요 ${fmt(r.totalDemand)} / 용량 ${fmt(c.capacity)}`);
+}
+function apply() {
+  let input;
+  try {input=JSON.parse($('input').value);} catch(e) {clear('입력 오류: JSON 형식을 확인하세요. '+e.message,true);return;}
+  const next=calculate(input);
+  if (next.status==='invalid') {clear('입력 오류\n'+next.errors.join('\n'),true);return;}
+  current=input;result=next;
+  if (!current.candidates.some(c=>c.id===selected)) selected=result.bestId ?? current.candidates[0]?.id;
+  render();
+}
+$('apply').onclick=apply;
+$('reset').onclick=()=>{selected=null;$('input').value=JSON.stringify(original,null,2);apply();};
+$('input').oninput=()=>clear('입력 변경 중: 입력 적용을 눌러 다시 계산하세요.');
+$('selected').onchange=()=>{selected=$('selected').value;render();};
+$('baseline').onchange=()=>{current.baseline=$('baseline').value;$('input').value=JSON.stringify(current,null,2);result=calculate(current);render();};
+$('reset').click();
+</script></body></html>

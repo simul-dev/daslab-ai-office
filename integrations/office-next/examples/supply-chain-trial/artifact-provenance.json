@@ -1,0 +1,35 @@
+{
+  "capturedAt": "2026-10-01T08:25:06.0821271Z",
+  "issue": "DAS-3",
+  "issueId": "0c44a60e-19a3-4015-80ac-6b0ad64bbfed",
+  "browserVerifier": "Root Codex operator via CUA; independent QA evaluated evidence",
+  "files": [
+    {
+      "sha256": "0f625eb50fa7e6ded109f237b1bdff9aef30929378ed571b1d62a870cf1bbf8a",
+      "name": "input.json"
+    },
+    {
+      "sha256": "180b28232463f6e82610ad23c23b00678d31507d2597cdc965f1194e6b0389a9",
+      "name": "calculate.mjs"
+    },
+    {
+      "sha256": "390591cd78af8db3259a8642c7cddb32d2cddb72a5d1c7589ad1bf583a620faf",
+      "name": "calculate.test.mjs"
+    },
+    {
+      "sha256": "ab71161eb61b01e450a6292fc5f2eec7655ac4858fd082a7a674b2c6c54f0205",
+      "name": "template.html"
+    },
+    {
+      "sha256": "ab622d6e7fa76bbb151d94d9e453a65bf8245dcfe1610472289fcacea7f38b4c",
+      "name": "build.mjs"
+    },
+    {
+      "sha256": "70da46114066c7408ee01700ccc897769a8a82a23014c12caba7b5e205826678",
+      "name": "index.html"
+    }
+  ],
+  "pmAccepted": true,
+  "sourceWorkspace": "C:\\Users\\User\\AI-Office-Next\\workspace\\supply-chain-trial",
+  "synthetic": true
+}

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+public/pixel-assets.json
+public/PIXEL-AGENTS-LICENSE.txt
+public/THIRD-PARTY-NOTICES.txt
+.asset-loader.cjs

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "common_instructions": "common.md",
+  "roles": [
+    {"slug":"assistant","name":"대표 비서","instructions":"assistant.md","reports_to":"owner","methods":["office-hours"],"legacy_employee_id":"assistant"},
+    {"slug":"pm","name":"프로젝트 PM","instructions":"pm.md","reports_to":"assistant","methods":["plan-ceo-review","plan-eng-review","retro"],"legacy_employee_id":"das-pm"},
+    {"slug":"researcher","name":"조사·방법론 연구원","instructions":"researcher.md","reports_to":"pm","methods":["office-hours","plan-ceo-review"],"legacy_employee_id":"das-rd"},
+    {"slug":"developer","name":"개발·모델링 담당","instructions":"developer.md","reports_to":"pm","methods":["plan-eng-review","review"],"legacy_employee_id":"das-rd"},
+    {"slug":"qa","name":"독립 검수 담당","instructions":"qa.md","reports_to":"pm","methods":["review"],"legacy_employee_id":null},
+    {"slug":"investment-analyst","name":"전략·투자심사역","instructions":"investment-analyst.md","reports_to":"owner","methods":["office-hours","plan-ceo-review"],"legacy_employee_id":null}
+  ],
+  "migration_note":"역할 대응표이며 기존 직원/미션 ID나 이력을 변경하지 않는다. Paperclip UUID는 bootstrap 결과에 별도 보존한다."
+}

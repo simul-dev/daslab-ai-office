@@ -58,9 +58,10 @@ class BrowserVerificationTests(unittest.TestCase):
         result = _artifacts(pins)
         pins['office.js'] = 'd' * 64
         self.assertEqual(result, HASHES)
+        self.assertEqual(_artifacts({**HASHES, 'voice-input.js': 'd' * 64})['voice-input.js'], 'd' * 64)
         for name in ('../secret', '/office.html', 'brand/../secret.png',
                      'brand/a.png:payload', 'brand/a.png ', 'brand\\a.png',
-                     'brand/nested//logo.svg', 'brand/a.js'):
+                     'brand/nested//logo.svg', 'brand/a.js', 'inference-worker.js', 'voice/audio.mjs'):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 _artifacts({**HASHES, name: 'a' * 64})
         for value in ({}, {'office.html': 'a' * 64}, {**HASHES, 'office.js': 'claim'}, []):

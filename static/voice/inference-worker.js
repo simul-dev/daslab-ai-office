@@ -9,7 +9,6 @@ import {
 } from '/voice/vendor/transformers.min.js';
 
 const SAMPLE_RATE = 16000;
-const MAX_SAMPLES = SAMPLE_RATE * 12;
 const SEGMENT_SAMPLES = SAMPLE_RATE * 10;
 const SPEAKER_MODEL = 'onnx-community/wespeaker-voxceleb-resnet34-LM';
 const SEGMENT_MODEL = 'onnx-community/pyannote-segmentation-3.0';
@@ -48,13 +47,13 @@ let segmentPromise;
 let transcriberPromise;
 let busy = false;
 
-function validateAudio(audio, minimumSeconds) {
+function validateAudio(audio, minimumSeconds, maximumSeconds = 12) {
   if (!(audio instanceof Float32Array)
       || audio.length < SAMPLE_RATE * minimumSeconds
-      || audio.length > MAX_SAMPLES
+      || audio.length > SAMPLE_RATE * maximumSeconds
       || (typeof SharedArrayBuffer !== 'undefined'
           && audio.buffer instanceof SharedArrayBuffer)) {
-    throw new Error(`16kHz 모노 음성이 ${minimumSeconds}~12초 필요합니다.`);
+    throw new Error(`16kHz 모노 음성이 ${minimumSeconds}~${maximumSeconds}초 필요합니다.`);
   }
   let nonzero = false;
   for (const sample of audio) {
@@ -252,11 +251,12 @@ async function segment(audio) {
   };
 }
 
-async function transcribe(audio) {
+async function transcribe(audio, inline = false) {
   const transcriber = await loadTranscriber();
   const result = await transcriber(audio, {
     language: 'korean', task: 'transcribe',
-    return_timestamps: false, max_new_tokens: 128,
+    return_timestamps: false, max_new_tokens: inline ? 448 : 128,
+    ...(inline ? {chunk_length_s: 20, stride_length_s: 3} : {}),
     do_sample: false,
   });
   if (Array.isArray(result) || typeof result?.text !== 'string' || result.text.length > 2000) {
@@ -279,18 +279,20 @@ self.onmessage = async ({ data }) => {
   busy = true;
   try {
     if ((typeof id !== 'string' && typeof id !== 'number')
-        || !['init', 'embed', 'segment', 'transcribe'].includes(data?.type)) {
+        || !['init', 'init-asr', 'embed', 'segment', 'transcribe', 'transcribe-inline'].includes(data?.type)) {
       throw new Error('지원하지 않는 음성 요청입니다.');
     }
     let result = {};
     if (data.type === 'init') {
       await loadSpeaker();
       await loadSegmenter();
+    } else if (data.type === 'init-asr') {
+      await loadTranscriber();
     } else {
-      validateAudio(audio, data.type === 'embed' ? 0.75 : 0.25);
+      validateAudio(audio, data.type === 'embed' ? 0.75 : 0.25, data.type === 'transcribe-inline' ? 60 : 12);
       if (data.type === 'embed') result = await embed(audio);
       else if (data.type === 'segment') result = await segment(audio);
-      else result = await transcribe(audio);
+      else result = await transcribe(audio, data.type === 'transcribe-inline');
     }
     self.postMessage({ id, ok: true, ...result });
   } catch (error) {

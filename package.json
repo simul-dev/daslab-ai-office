@@ -5,7 +5,7 @@
   "description": "Locally hosted browser inference assets for the DAS Lab owner assistant",
   "scripts": {
     "voice:assets": "python scripts/setup_voice_assets.py",
-    "test:voice": "node --test tests/voice_policy.test.mjs"
+    "test:voice": "node --test tests/voice_policy.test.mjs tests/inline_voice.test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1"

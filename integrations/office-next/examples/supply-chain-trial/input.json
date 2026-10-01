@@ -1,0 +1,50 @@
+{
+  "label": "Synthetic integration test, not customer evidence",
+  "demand": [
+    40,
+    60,
+    30
+  ],
+  "baseline": "A",
+  "candidates": [
+    {
+      "id": "A",
+      "name": "수원",
+      "lat": 37.26,
+      "lon": 127.03,
+      "capacity": 150,
+      "fixedCost": 1000,
+      "unitCosts": [
+        5,
+        8,
+        10
+      ]
+    },
+    {
+      "id": "B",
+      "name": "천안",
+      "lat": 36.81,
+      "lon": 127.15,
+      "capacity": 80,
+      "fixedCost": 30,
+      "unitCosts": [
+        4,
+        6,
+        8
+      ]
+    },
+    {
+      "id": "C",
+      "name": "대전",
+      "lat": 36.35,
+      "lon": 127.38,
+      "capacity": 180,
+      "fixedCost": 100,
+      "unitCosts": [
+        8,
+        7,
+        5
+      ]
+    }
+  ]
+}

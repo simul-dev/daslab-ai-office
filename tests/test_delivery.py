@@ -62,6 +62,28 @@ class GitDeliveryTests(unittest.TestCase):
         self.assertEqual(committed['commit'], pushed['commit'])
         self.assertEqual(self.git('rev-list', '--count', self.base + '..HEAD').strip(), '1')
 
+    def test_voice_runtime_delivery_preserves_only_exact_existing_bytes(self):
+        runtime = b'"use strict"; // existing trusted runtime\n'
+        (self.root / 'static/voice-input.js').write_bytes(runtime)
+        self.git('add', 'static/voice-input.js')
+        self.git('commit', '-m', 'Existing voice runtime')
+        self.files['voice-input.js'] = runtime
+        self.baseline['voice-input.js'] = hashlib.sha256(runtime).hexdigest()
+        for replacement in (runtime + b'// edited', None):
+            if replacement is None:
+                self.files.pop('voice-input.js')
+            else:
+                self.files['voice-input.js'] = replacement
+            with self.assertRaisesRegex(DeliveryError, '참조 전용'):
+                self.deliver('apply')
+            self.assertEqual((self.root / 'static/voice-input.js').read_bytes(), runtime)
+            self.assertEqual((self.root / 'static/office.css').read_bytes(), self.original['office.css'])
+        self.files['voice-input.js'] = runtime
+        receipt = self.deliver('apply')
+        self.assertTrue(receipt['applied_to_live'])
+        self.assertEqual(receipt['files']['voice-input.js'], self.baseline['voice-input.js'])
+        self.assertEqual((self.root / 'static/voice-input.js').read_bytes(), runtime)
+
     def test_existing_staged_and_unstaged_work_is_preserved(self):
         for staged in (False, True):
             with self.subTest(staged=staged):

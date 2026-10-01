@@ -13,11 +13,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from .process_env import child_env
+
 REQUIRED = ('office.html', 'office.css', 'office.js')
+READ_ONLY = ('voice-input.js',)
 ASSETS = {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.ico', '.woff2'}
 PREVIEW_JS = r'''"use strict";
 (() => {
- const deny = '#command-form, #assign-selected, .memory-form, .detail-actions, .detail-intervention, #reconnect, .runtime-check, .standing-action';
+ const deny = '#command-form, #assign-selected, .memory-form, .detail-actions, .detail-intervention, #reconnect, .runtime-check, .standing-action, #voice-toggle, #voice-cancel, #logout';
  const lock = () => {
   document.querySelectorAll(deny).forEach(e => { e.querySelectorAll('button,input,textarea,select').forEach(x => { if (!x.disabled) x.disabled = true; }); if (e.matches('button') && !e.disabled) e.disabled = true; });
   document.querySelectorAll('a[href^="/voice"],a[href="/legacy"]').forEach(e => { e.removeAttribute('href'); e.setAttribute('aria-disabled','true'); });
@@ -86,7 +89,7 @@ class DevelopmentWorkspace:
             for name in files:
                 path = _safe(Path(base) / name, static)
                 relative = path.relative_to(static).as_posix()
-                if relative not in REQUIRED and not (relative.startswith('brand/') and path.suffix.lower() in ASSETS):
+                if relative not in REQUIRED + READ_ONLY and not (relative.startswith('brand/') and path.suffix.lower() in ASSETS):
                     raise ValueError('Unexpected workspace file: ' + relative)
                 if path.stat().st_size > 10_000_000 or len(result) >= 512:
                     raise ValueError('Preview asset limit exceeded')
@@ -116,6 +119,12 @@ class DevelopmentWorkspace:
         for name in REQUIRED:
             path = _safe(source / name, source)
             files[name] = path.read_bytes()
+        # Old previews remain self-contained; only copy a runtime present in the
+        # chosen source. It is pinned like other assets, but never editable.
+        for name in READ_ONLY:
+            path = _safe(source / name, source)
+            if path.exists():
+                files[name] = path.read_bytes()
         brand = _safe(source / 'brand', source)
         if brand.exists():
             for base, dirs, names in os.walk(brand, followlinks=False):
@@ -145,7 +154,10 @@ class DevelopmentWorkspace:
                     'live_files': live_files, 'html': files['office.html'].decode('utf-8'),
                     'allow_unchanged': bool(allow_unchanged and previous_folder is not None)}
         (folder / 'development-baseline.json').write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
-        return {'workspace': str(workspace), 'static_dir': str(workspace / 'static'), 'files': list(files), 'target': 'DAS Lab internal organization operations UI', 'preview_read_only': True}
+        return {'workspace': str(workspace), 'static_dir': str(workspace / 'static'), 'files': list(files),
+                'read_only_files': [name for name in READ_ONLY if name in files],
+                'runtime_constraint': 'voice-input.js는 참조 전용입니다. 수정·삭제하거나 음성 모듈을 추가하지 마세요. 미리보기에서는 마이크·음성 실행이 꺼져 있습니다.',
+                'target': 'DAS Lab internal organization operations UI', 'preview_read_only': True}
 
     def delivery_files(self, folder, expected_artifacts):
         """Return only the pinned preview and its original live-file baseline."""
@@ -167,13 +179,19 @@ class DevelopmentWorkspace:
                 raise ValueError('Required UI identifiers were removed')
             if after.body_count != 1 or not re.search(r'</body\s*>', files['office.html'].decode('utf-8'), re.I):
                 raise ValueError('Preview requires one complete HTML body')
-            if after.unsafe or after.scripts != before.scripts or after.styles != before.styles or any(s not in ('/office.js', 'office.js') for s in after.scripts):
+            allowed_scripts = ('/office.js', 'office.js', '/voice-input.js', 'voice-input.js')
+            if (after.unsafe or after.scripts != before.scripts or after.styles != before.styles
+                    or any(s not in allowed_scripts or s.lstrip('/') not in files for s in after.scripts)):
                 raise ValueError('Required scripts/styles changed or unsafe HTML introduced')
+            for name in READ_ONLY:
+                digest = _hash(files[name]) if name in files else None
+                if digest != baseline['files'].get(name):
+                    raise ValueError('Read-only runtime changed: ' + name)
             checks.append('Required DOM IDs and local script/style references preserved')
             node = shutil.which('node')
             if not node:
                 raise ValueError('Node.js unavailable: syntax verification cannot run')
-            process = subprocess.run([node, '--check', str(folder / 'workspace/static/office.js')], capture_output=True, text=True, timeout=20, shell=False)
+            process = subprocess.run([node, '--check', str(folder / 'workspace/static/office.js')], capture_output=True, text=True, timeout=20, shell=False, env=child_env())
             if process.returncode:
                 raise ValueError('JavaScript syntax check failed: ' + process.stderr[:800])
             checks.append('JavaScript syntax verified with node --check')
@@ -227,7 +245,8 @@ class DevelopmentWorkspace:
                     self.send_header('Cache-Control', 'no-store')
                     self.send_header('X-Content-Type-Options', 'nosniff')
                     self.send_header('Referrer-Policy', 'no-referrer')
-                    self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+                    self.send_header('Permissions-Policy', 'microphone=(), camera=(), display-capture=()')
+                    self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; worker-src 'none'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
                     self.end_headers()
                     self.wfile.write(body)
 
@@ -244,6 +263,10 @@ class DevelopmentWorkspace:
                     path = unquote(urlsplit(self.path).path)
                     if '\\' in path or any(p in ('.', '..') for p in path.split('/')):
                         self.respond(404, b'{}')
+                        return
+                    if path == '/api/auth':
+                        # A fixed preview capability, never a live login/session.
+                        self.respond(200, b'{"authenticated":true,"mode":"preview","read_only":true,"voice_enabled":false}')
                         return
                     if path == '/api/org/events':
                         if not slots.acquire(False):

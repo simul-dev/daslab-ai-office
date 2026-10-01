@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {calculate} from './calculate.mjs';
+const original=JSON.parse(readFileSync(new URL('input.json',import.meta.url)));
+const run=change=>{const x=structuredClone(original);change?.(x);return calculate(x);};
+test('original independent literals',()=>{
+ const r=run();assert.equal(r.totalDemand,130);assert.deepEqual(r.candidates.map(c=>c.totalCost),[1980,790,990]);assert.deepEqual(r.candidates.map(c=>c.feasible),[true,false,true]);assert.equal(r.bestId,'C');assert.equal(r.savings,990);assert.equal(r.savingsPercent,50);
+});
+test('fixed cost isolated and reversal',()=>{assert.equal(run(x=>x.candidates=[x.candidates[0]]).bestCost,1980);assert.equal(run(x=>x.candidates[0].fixedCost=0).bestId,'A');});
+test('capacity thresholds and no feasible',()=>{assert.equal(run(x=>x.candidates[1].capacity=129).bestId,'C');const r=run(x=>x.candidates[1].capacity=130);assert.equal(r.bestId,'B');assert.equal(r.savings,1190);assert.ok(Math.abs(r.savingsPercent-60.1010101010101)<1e-10);assert.equal(run(x=>x.candidates.forEach(c=>c.capacity=129)).status,'no_feasible');});
+test('baseline C B Z missing',()=>{const c=run(x=>x.baseline='C');assert.equal(c.savings,0);assert.equal(c.savingsPercent,0);const b=run(x=>x.baseline='B');assert.equal(b.comparable,false);assert.equal(b.savings,null);assert.equal(run(x=>x.baseline='Z').status,'invalid');assert.equal(run(x=>delete x.baseline).status,'invalid');});
+for(const value of [-1,Infinity,NaN,'40',null,undefined]) for(const field of ['demand','capacity','fixedCost','unitCosts']) test(`invalid ${field} ${String(value)}`,()=>{assert.equal(run(x=>{if(field==='demand')x.demand[0]=value;else if(field==='unitCosts')x.candidates[0].unitCosts[0]=value;else x.candidates[0][field]=value;}).status,'invalid');});
+test('shape length duplicates and sparse arrays',()=>{for(const change of [x=>delete x.demand,x=>x.demand=[],x=>delete x.demand[0],x=>delete x.candidates[0],x=>delete x.candidates[0].unitCosts[0],x=>x.candidates[0].unitCosts=[1],x=>x.candidates[1].id='A',x=>x.candidates[0].id='',x=>delete x.candidates,x=>delete x.candidates[0].fixedCost])assert.equal(run(change).status,'invalid');for(const v of [null,[],2,'x'])assert.equal(calculate(v).status,'invalid');});
+test('ties stable under candidate order',()=>{for(const reverse of [false,true]) {const r=run(x=>{x.candidates[0].fixedCost=10;if(reverse)x.candidates.reverse();});assert.equal(r.bestId,'A');assert.deepEqual(r.tiedIds,['A','C']);}});
+test('zero demand, zero baseline, empty candidates',()=>{assert.equal(run(x=>x.demand=[0,0,0]).bestId,'B');const r=run(x=>{x.demand=[0,0,0];x.candidates.forEach(c=>c.fixedCost=0);});assert.equal(r.savings,0);assert.equal(r.savingsPercent,null);const empty=run(x=>x.candidates=[]);assert.equal(empty.status,'no_feasible');assert.equal(empty.comparable,false);});
+test('overflow sum product cost',()=>{for(const change of [x=>x.demand=[1e308,1e308,0],x=>{x.demand=[1e308,0,0];},x=>{x.candidates[0].fixedCost=1.7e308;x.candidates[0].unitCosts[0]=1e306;}])assert.equal(run(change).status,'invalid');});
+test('repeat immutable and new processes',()=>{const before=JSON.stringify(original),expected=calculate(original);for(let i=0;i<100;i++)assert.deepEqual(calculate(original),expected);assert.equal(JSON.stringify(original),before);const code=`import {calculate} from './supply-chain-trial/calculate.mjs'; console.log(JSON.stringify(calculate(${before})))`;for(let i=0;i<2;i++){const p=spawnSync(process.execPath,['--input-type=module','-e',code],{encoding:'utf8'});assert.equal(p.status,0,p.stderr);assert.deepEqual(JSON.parse(p.stdout),expected);}});
+test('HTML embeds exact calculation source and original input',()=>{const html=readFileSync(new URL('index.html',import.meta.url),'utf8');assert.ok(html.includes(readFileSync(new URL('calculate.mjs',import.meta.url),'utf8').replace('export function calculate','function calculate')));assert.ok(html.includes(JSON.stringify(original)));});

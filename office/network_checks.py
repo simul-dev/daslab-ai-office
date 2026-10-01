@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .browser_verification import (BrowserVerifier, BrowserUnavailable, _preview_url,
                                    _origin, _route_request, _installed_browser, _output_directory)
+from .process_env import child_env, require_clean_process_env
 
 
 PROFILE = "supply-network-gis-v1"
@@ -347,9 +348,10 @@ class NetworkVerifier(BrowserVerifier):
             from playwright.async_api import async_playwright
         except ImportError:
             raise BrowserUnavailable("격리 브라우저 검증 도구가 필요합니다.") from None
+        require_clean_process_env()
         async with async_playwright() as playwright:
             try:
-                browser = await playwright.chromium.launch(headless=True, channel=_installed_browser(), timeout=12000,
+                browser = await playwright.chromium.launch(headless=True, channel=_installed_browser(), timeout=12000, env=child_env(),
                     args=["--disable-background-networking", "--disable-component-update", "--dns-prefetch-disable"])
             except Exception as exc:
                 raise BrowserUnavailable("격리 브라우저 실행 실패: " + str(exc)[:200]) from exc

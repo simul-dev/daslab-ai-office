@@ -15,6 +15,9 @@ from office.store import Conflict
 from office.report_recovery import recover_future_actions, recover_report_references, restore_unstarted_report
 from office.prototype_recovery import recover_prototype
 from office.prototype_capture import capture_prototype_repair_source
+from office.auth import AuthError, OfficeAuth, auth_failure_reason
+from office.process_env import clear_server_secrets
+from office.intake import route_intake
 
 ROOT = Path(__file__).resolve().parent
 
@@ -111,11 +114,48 @@ class InstanceLock:
         self.file.close()
 
 
-def handler_for(office, organization=None):
+class OfficeHTTPServer(ThreadingHTTPServer):
+    """Bound slow or excessive browser connections on either loopback listener."""
+
+    daemon_threads = True
+    request_queue_size = 64
+    max_active_requests = 48
+
+    def __init__(self, *args, **kwargs):
+        self._request_slots = threading.BoundedSemaphore(self.max_active_requests)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
+def handler_for(office, organization=None, auth=None):
+    auth = auth or OfficeAuth()
     stream_slots = threading.BoundedSemaphore(12)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "DASLabOffice/0.1"
+
+        def setup(self):
+            self.request.settimeout(15)
+            super().setup()
 
         def log_message(self, fmt, *args):
             # No request bodies, auth values or sensitive query strings in server log.
@@ -124,19 +164,22 @@ def handler_for(office, organization=None):
         def security_headers(self, voice=False):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
             script = "script-src 'self' 'wasm-unsafe-eval'" if voice else "script-src 'self'"
             worker = "; worker-src 'self' blob:" if voice else ""
             self.send_header("Content-Security-Policy", "default-src 'self'; " + script + "; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" + worker)
             if voice:
                 self.send_header("Permissions-Policy", "microphone=(self), camera=()")
 
-        def respond(self, status, data, content_type="application/json; charset=utf-8"):
+        def respond(self, status, data, content_type="application/json; charset=utf-8", *, voice=False, cookies=()):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            self.security_headers()
+            for cookie in cookies:
+                self.send_header("Set-Cookie", cookie)
+            self.security_headers(voice=voice)
             self.end_headers()
             try:
                 self.wfile.write(data)
@@ -156,14 +199,14 @@ def handler_for(office, organization=None):
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
 
-        def local_request(self):
-            host = self.headers.get("Host", "")
-            allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
-            if host not in allowed:
-                raise PermissionError("로컬 주소로 접속해 주세요.")
-            origin = self.headers.get("Origin")
-            if origin and origin != "http://" + host:
-                raise PermissionError("동일한 로컬 웹에서만 요청할 수 있습니다.")
+        def redirect(self, location, cookies=()):
+            self.send_response(303)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            for cookie in cookies:
+                self.send_header("Set-Cookie", cookie)
+            self.security_headers()
+            self.end_headers()
 
         def stream_organization(self):
             if not stream_slots.acquire(blocking=False):
@@ -176,6 +219,10 @@ def handler_for(office, organization=None):
                 self.end_headers()
                 previous = None
                 while not organization.closed:
+                    if auth.current_user(self.headers.get("Cookie", "")) is None:
+                        self.wfile.write(b"event: auth-required\ndata: {}\n\n")
+                        self.wfile.flush()
+                        break
                     snapshot = organization.snapshot()
                     revision = snapshot["revision"]
                     if revision != previous:
@@ -198,23 +245,88 @@ def handler_for(office, organization=None):
         def do_POST(self):
             self.dispatch(True)
 
+        def json_body(self):
+            if self.headers.get("X-DAS-Office") != "1" or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                raise PermissionError("JSON 및 X-DAS-Office 헤더가 필요합니다.")
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 131072:
+                raise ValueError("요청 크기가 올바르지 않습니다.")
+            body = json.loads(self.rfile.read(length))
+            if not isinstance(body, dict):
+                raise ValueError("JSON 객체가 필요합니다.")
+            return body
+
         def dispatch(self, write):
             try:
-                self.local_request()
+                auth.check_request(self.headers.get("Host", ""), self.headers.get("Origin"),
+                                   self.client_address[0], self.server.server_port, write=write)
                 path = urlsplit(self.path).path
-                body = {}
-                if write:
-                    if self.headers.get("X-DAS-Office") != "1" or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
-                        raise PermissionError("JSON 및 X-DAS-Office 헤더가 필요합니다.")
-                    length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= 131072:
-                        raise ValueError("요청 크기가 올바르지 않습니다.")
-                    body = json.loads(self.rfile.read(length))
-                    if not isinstance(body, dict):
-                        raise ValueError("JSON 객체가 필요합니다.")
-                if organization is not None and path == "/api/org" and not write:
+                cookie = self.headers.get("Cookie", "")
+                if not write and path == "/api/auth":
+                    self.respond(200, auth.status(cookie))
+                    return
+                if not write and path == "/auth/login" and auth.mode == "github":
+                    result = auth.begin_login(cookie)
+                    self.redirect(result["location"], result.get("cookies", ()))
+                    return
+                if not write and path == "/auth/callback" and auth.mode == "github":
+                    try:
+                        result = auth.finish_login(urlsplit(self.path).query, cookie)
+                        self.redirect(result["location"], result.get("cookies", ()))
+                    except (PermissionError, ValueError) as exc:
+                        self.redirect("/login?failed=1&reason=" + auth_failure_reason(exc))
+                    return
+                if not write and path in ("/login", "/login.js", "/office.css"):
+                    if path == "/login" and auth.current_user(cookie) is not None:
+                        self.redirect("/")
+                    else:
+                        name = "login.html" if path == "/login" else path[1:]
+                        mime = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}[Path(name).suffix]
+                        self.respond(200, (ROOT / "static" / name).read_bytes(), mime + "; charset=utf-8")
+                    return
+                if write and path == "/auth/pair" and auth.mode == "pairing":
+                    result = auth.pair_login(self.json_body().get("token"), cookie)
+                    self.respond(200, {"authenticated": result["authenticated"], "user": result["user"]},
+                                 cookies=result["cookies"])
+                    return
+                if auth.current_user(cookie) is None:
+                    if not write and path in ("/", "/index.html", "/legacy", "/voice", "/voice/"):
+                        self.redirect("/login")
+                    else:
+                        self.respond(401, {"error": "로그인이 필요합니다.", "login_url": "/login"})
+                    return
+                body = self.json_body() if write else {}
+                if write and path == "/auth/logout":
+                    result = auth.logout(cookie)
+                    self.redirect("/login", result.get("cookies", ()))
+                elif (write and path == "/api/owner/pair/start" and auth.mode == "local"
+                      and auth.pairing_auth is not None):
+                    if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+                        raise PermissionError("PC의 같은 웹 화면에서 연결해 주세요.")
+                    if body:
+                        raise ValueError("연결 시작 요청은 빈 JSON 객체만 허용합니다.")
+                    self.respond(200, auth.pairing_auth.start_pairing())
+                elif (write and path == "/api/owner/pair/revoke-all" and auth.mode == "local"
+                      and auth.pairing_auth is not None):
+                    if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+                        raise PermissionError("PC의 같은 웹 화면에서 연결해 주세요.")
+                    if body:
+                        raise ValueError("연결 해제 요청은 빈 JSON 객체만 허용합니다.")
+                    self.respond(200, auth.pairing_auth.revoke_paired_sessions())
+                elif (write and path == "/api/owner/pair/cancel" and auth.mode == "local"
+                      and auth.pairing_auth is not None):
+                    if self.headers.get("Origin") != "http://" + self.headers.get("Host", ""):
+                        raise PermissionError("PC의 같은 웹 화면에서 연결해 주세요.")
+                    if body:
+                        raise ValueError("연결 취소 요청은 빈 JSON 객체만 허용합니다.")
+                    self.respond(200, auth.pairing_auth.cancel_pairing())
+                elif organization is not None and path == "/api/org/route" and write:
+                    self.respond(200, route_intake(body.get("text"), employee_id=body.get("employee_id"), auto=body.get("auto", True)))
+                elif organization is not None and path == "/api/org" and not write:
                     self.respond(200, organization.snapshot())
                 elif organization is not None and not write and (m := re.fullmatch(r"/previews/([a-f0-9]{32})/", path)):
+                    if auth.mode in ("github", "pairing"):
+                        raise Conflict("이 미리보기는 PC의 별도 로컬 화면에서 열어 주세요. 원격 미리보기는 아직 연결되지 않았습니다.")
                     location = organization.preview(m[1])
                     self.send_response(302)
                     self.send_header("Location", location)
@@ -222,6 +334,8 @@ def handler_for(office, organization=None):
                     self.security_headers()
                     self.end_headers()
                 elif organization is not None and not write and (m := re.fullmatch(r"/prototypes/([a-f0-9]{32})/", path)):
+                    if auth.mode in ("github", "pairing"):
+                        raise Conflict("이 데모는 PC의 별도 로컬 화면에서 열어 주세요. 원격 데모 미리보기는 아직 연결되지 않았습니다.")
                     location = organization.prototype_preview(m[1])
                     self.send_response(302)
                     self.send_header("Location", location)
@@ -241,6 +355,11 @@ def handler_for(office, organization=None):
                 elif organization is not None and path == "/api/org/standing/schedule" and write:
                     self.respond(200, organization.standing.register_schedule(body.get("automation_id")))
                 elif organization is not None and path == "/api/org/missions" and write:
+                    if body.get("auto_recipient") is True:
+                        routed = route_intake(body.get("text"), auto=True)
+                        if routed["needs_clarification"]:
+                            raise ValueError("여러 직원을 부르셨습니다. 받는 직원 한 명을 선택해 주세요.")
+                        body = {**body, "employee_id": routed["employee_id"]}
                     self.respond(201, organization.submit(body))
                 elif organization is not None and write and (m := re.fullmatch(r"/api/org/missions/([a-f0-9]{32})/input", path)):
                     self.respond(200, organization.projects.answer(m[1], body))
@@ -309,16 +428,17 @@ def handler_for(office, organization=None):
                     else:
                         asset_path, content_type = asset
                         self.respond(200, asset_path.read_bytes(), content_type)
-                elif not write and path in ("/", "/index.html", "/legacy", "/styles.css", "/app.js", "/office.css", "/office.js"):
+                elif not write and path in ("/", "/index.html", "/legacy", "/styles.css", "/app.js", "/office.css", "/office.js", "/voice-input.js", "/qr-code.js"):
                     name = "office.html" if organization is not None and path in ("/", "/index.html") else "index.html" if path in ("/", "/legacy") else path[1:]
                     mime = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}[Path(name).suffix]
-                    self.respond(200, (ROOT / "static" / name).read_bytes(), mime + "; charset=utf-8")
+                    self.respond(200, (ROOT / "static" / name).read_bytes(), mime + "; charset=utf-8", voice=name == "office.html")
                 else:
                     self.respond(404, {"error": "찾을 수 없습니다."})
             except KeyError:
                 self.respond(404, {"error": "업무 또는 파일을 찾을 수 없습니다."})
             except PermissionError as exc:
-                self.respond(403, {"error": str(exc)})
+                self.respond(429 if isinstance(exc, AuthError) and exc.reason == "pair_rate_limited" else 403,
+                             {"error": str(exc)})
             except Conflict as exc:
                 self.respond(409, {"error": str(exc)})
             except (ValueError, UnicodeError) as exc:
@@ -328,34 +448,103 @@ def handler_for(office, organization=None):
     return Handler
 
 
+def _listener_configuration(port, auth, public_port=None):
+    """Choose explicit per-listener authentication before starting an engine."""
+    if type(port) is not int or not 0 <= port <= 65535:
+        raise ValueError("서버 포트가 올바르지 않습니다.")
+    if public_port is None:
+        auth.validate_bind("127.0.0.1")
+        return [(port, auth)]
+    if (type(public_port) is not int or not 1 <= public_port <= 65535
+            or not port or port == public_port):
+        raise ValueError("공개 연결 포트는 로컬 포트와 다른 1~65535 값이어야 합니다.")
+    if auth.mode not in ("github", "pairing"):
+        raise ValueError("공개 연결에는 GitHub 또는 기기 연결 인증 설정이 필요합니다.")
+    # Both listeners bind to loopback. Only the second is a tunnel target;
+    # neither changes handler_for's Host, Origin, peer or session checks.
+    local = OfficeAuth()
+    if auth.mode == "pairing":
+        local.pairing_auth = auth
+    local.validate_bind("127.0.0.1")
+    auth.validate_bind("127.0.0.1")
+    return [(port, local), (public_port, auth)]
+
+
+def _bind_listeners(office, organization, configuration):
+    """Bind all sockets before serving; roll back a partially bound pair."""
+    servers = []
+    try:
+        for port, auth in configuration:
+            server = OfficeHTTPServer(("127.0.0.1", port), handler_for(office, organization, auth))
+            server.daemon_threads = True
+            servers.append(server)
+        return servers
+    except BaseException:
+        for server in servers:
+            server.server_close()
+        raise
+
+
+def _serve_listeners(servers):
+    """Keep one process alive for every listener and stop their loops together."""
+    threads = []
+    try:
+        for index, server in enumerate(servers):
+            thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .25},
+                                      name=f"office-http-{index}", daemon=True)
+            thread.start()
+            threads.append(thread)
+        while threads and all(thread.is_alive() for thread in threads):
+            threads[0].join(timeout=.25)
+        raise RuntimeError("서버 연결이 종료되어 다른 연결도 함께 정리합니다.")
+    finally:
+        for server, thread in zip(servers, threads):
+            if thread.is_alive():
+                server.shutdown()
+        for thread in threads:
+            thread.join(timeout=3)
+
+
 def main():
     parser = argparse.ArgumentParser(description="DAS Lab AI Office — 로컬 관리자 웹")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--public-port", type=int,
+                        help="선택적 인증 전용 loopback 포트. --port는 기존 로컬 접속에 유지합니다.")
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
+    parser.add_argument("--auth-config", type=Path, default=ROOT / "config" / "auth.json")
     parser.add_argument("--extra-runs-today", type=int, choices=range(1, 31), default=0,
                         help="이번 서버 실행의 오늘(한국 시간)에만 내부 실행 1~30회 추가")
     args = parser.parse_args()
     data_dir = args.data_dir.resolve()
+    auth_config = json.loads(args.auth_config.read_text(encoding="utf-8")) if args.auth_config.exists() else None
+    if isinstance(auth_config, dict) and auth_config.get("mode") == "pairing":
+        auth_config = {**auth_config, "session_db": str(data_dir / "owner-sessions.sqlite3")}
+    auth = OfficeAuth(auth_config)
+    clear_server_secrets(auth_config)
+    configuration = _listener_configuration(args.port, auth, args.public_port)
     lock = InstanceLock(data_dir)
     office = None
     organization = None
-    server = None
+    servers = []
     try:
         from office.organization import OrganizationEngine
         office = Office(ROOT, data_dir, start_scheduler=False)
         organization = OrganizationEngine(ROOT, data_dir, extra_runs_today=args.extra_runs_today)
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(office, organization))
-        server.daemon_threads = True
-        print(f"DAS Lab AI Office: http://127.0.0.1:{args.port}", flush=True)
+        servers = _bind_listeners(office, organization, configuration)
+        for server, (_, listener_auth) in zip(servers, configuration):
+            if listener_auth.mode in ("github", "pairing"):
+                print(f"DAS Lab AI Office: {listener_auth.public_origin} · HTTPS 연결 대상 127.0.0.1:{server.server_port}", flush=True)
+            else:
+                print(f"DAS Lab AI Office: http://127.0.0.1:{server.server_port} · PC 내부 접속", flush=True)
         print("조직 운영 엔진 · 구독 실행 · 음성은 선택 입력. 종료: Ctrl+C", flush=True)
         if args.extra_runs_today:
             print(f"오늘(한국 시간) 내부 실행 {args.extra_runs_today}회 추가 · 총 {organization._daily_limit()}회. "
                   "이번 서버 실행에만 적용하며 다음 날짜에는 기본 한도로 돌아갑니다.", flush=True)
-        server.serve_forever(poll_interval=0.25)
+        _serve_listeners(servers)
     except KeyboardInterrupt:
         pass
     finally:
-        if server:
+        for server in servers:
             server.server_close()
         if office:
             office.close()

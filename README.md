@@ -18,7 +18,9 @@ python -m venv .venv
 
 [조직 오피스](http://127.0.0.1:8765/)에서 직원을 선택하거나 비서에게 업무를 맡기세요. 등록된 역할·기억과 지시를 실행 문맥에 포함하고, 일시정지·재개·방향 수정·담당 변경을 원장에 남깁니다. 폼에 목표·기준·우선순위를 따로 작성할 필요는 없습니다.
 
-음성은 선택 기능입니다. **음성 입력**을 누른 때에만 기기에서 인식하고, 확인한 텍스트를 조직 화면으로 가져옵니다. 마이크는 기본적으로 꺼져 있습니다. 모든 업무 제어는 UI로 가능합니다. [음성 설정·한계](docs/VOICE.md)
+메인 화면의 **말로 입력**을 누르면 목소리 등록 없이 기기에서 음성을 글로 바꿉니다. `PM 너가…`처럼 부른 직원은 자동 선택되며, 내용을 확인하고 **업무 맡기기**를 눌러야 실행됩니다. 마이크는 기본적으로 꺼져 있습니다. [음성 설정·한계](docs/VOICE.md)
+
+폰 접속을 위한 대표 개인 GitHub 계정 로그인도 지원합니다. 실제 사용에는 OAuth App 등록과 HTTPS 주소 연결이 필요하며, 설정 전에는 이 PC에서만 열립니다. [로그인·폰 연결 설정](docs/AUTH-INTEGRATION.md)
 
 ## 현재 구현과 한계
 
@@ -41,6 +43,7 @@ python -m venv .venv
 ```powershell
 python -m unittest discover -s tests -q
 node --test tests/voice_policy.test.mjs
+node --test tests/inline_voice.test.mjs
 ```
 
 자동 테스트는 임시 DB와 테스트 실행기를 사용하며 실제 AI 호출을 하지 않습니다. [조직 엔진 설명](docs/ORG-ENGINE.md), [API 계약](docs/ORG-CONTRACT.md), [검증 기록](docs/ORG-VERIFICATION.md)을 참조하세요. 이전 미션 실행기 설명은 [보존본](docs/README-mission-runner-20260924.md)에 있습니다.

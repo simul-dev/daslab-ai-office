@@ -7,7 +7,8 @@ import tempfile
 import threading
 from pathlib import Path, PurePosixPath
 
-from .development import ASSETS, REQUIRED, _safe
+from .development import ASSETS, REQUIRED, READ_ONLY, _safe
+from .process_env import child_env
 
 
 def _digest(data):
@@ -28,7 +29,7 @@ class GitDelivery:
         self.lock = threading.RLock()
 
     def _git(self, *args, input=None, index=None, allowed=(0,)):
-        env = {k: v for k, v in os.environ.items() if not k.upper().startswith('GIT_')}
+        env = {k: v for k, v in child_env().items() if not k.upper().startswith('GIT_')}
         env.update(GIT_TERMINAL_PROMPT='0', GIT_OPTIONAL_LOCKS='0')
         if index is not None:
             env['GIT_INDEX_FILE'] = str(index)
@@ -49,7 +50,7 @@ class GitDelivery:
         path = PurePosixPath(name)
         if ('\\' in name or path.as_posix() != name or path.is_absolute()
                 or any(p.startswith('.') or ':' in p or p.endswith((' ', '.')) for p in path.parts)
-                or not (name in REQUIRED or (name.startswith('brand/') and path.suffix.lower() in ASSETS))):
+                or not (name in REQUIRED + READ_ONLY or (name.startswith('brand/') and path.suffix.lower() in ASSETS))):
             raise ValueError('허용되지 않은 UI 파일: ' + str(name))
         return _safe(self.root / 'static' / name, self.root / 'static')
 
@@ -211,6 +212,8 @@ class GitDelivery:
                     if name in files and (not isinstance(files[name], bytes) or len(files[name]) > 10_000_000):
                         raise ValueError('검증된 파일 바이트가 필요합니다.')
                     hashes[name] = _digest(files[name]) if name in files else None
+                    if name in READ_ONLY and (name not in files or hashes[name] != baseline.get(name)):
+                        raise ValueError('참조 전용 음성 런타임은 변경하거나 삭제할 수 없습니다: ' + name)
                 if Path(self._text('rev-parse', '--show-toplevel')).resolve() != self.root:
                     raise ValueError('등록된 저장소 루트에서만 전달할 수 있습니다.')
                 branch = self._text('symbolic-ref', '--quiet', '--short', 'HEAD')

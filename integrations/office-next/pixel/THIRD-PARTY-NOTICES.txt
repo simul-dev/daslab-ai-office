@@ -1,0 +1,20 @@
+Pixel Agents
+https://github.com/pixel-agents-hq/pixel-agents
+Commit: 3537e140c2094761beae748592aeb92ece8edfdd (version 1.4.1)
+Copyright (c) 2026 Pablo De Lucca
+MIT License. The complete notice is distributed in PIXEL-AGENTS-LICENSE.txt.
+
+This integration builds the actual upstream Canvas renderer, character state
+machine, office layout and bundled assets. It does not run the upstream Claude
+hooks, terminal launcher, transcript scanner or persistent settings manager.
+
+Upstream credits the character artwork to JIK-A-4's MetroCity free top-down
+character pack. Its author page identifies CC0 1.0 Universal and permits
+commercial use. Source verified on 2026-10-01:
+https://jik-a-4.itch.io/metrocity-free-topdown-character-pack
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Bundled furniture/floor/wall assets are taken only from the pinned MIT-licensed
+repository. Optional third-party paid packs mentioned in upstream documentation
+are not downloaded or included. Separate distribution is subject to a fresh
+asset provenance review if additional packs are introduced.

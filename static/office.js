@@ -9,6 +9,114 @@
   const activeStates = new Set(["queued", "running", "waiting", "pausing"]);
   const writableStates = new Set(["queued", "running", "waiting", "paused", "review", "blocked", "failed", "deferred"]);
   const glyphs = { assistant: "AS", "das-pm": "PM", "das-rd": "R&D", "das-mkt": "MKT", "das-sales": "BIZ", owner: "나" };
+  class BrowserSpeechInput {
+    constructor({host = window, view = document, isAllowed = () => false, onState = () => {}, onTranscript = () => {}} = {}) {
+      this.host = host;
+      this.view = view;
+      this.Recognizer = host.SpeechRecognition || host.webkitSpeechRecognition;
+      this.available = typeof this.Recognizer === "function";
+      this.isAllowed = isAllowed;
+      this.onState = onState;
+      this.onTranscript = onTranscript;
+      this.recognition = null;
+      this.timer = null;
+      this.run = 0;
+      this.accepted = false;
+      this._emit("idle", this.available ? "버튼을 누르면 바로 듣습니다." : "이 브라우저는 음성인식을 지원하지 않습니다. 키보드 마이크를 사용해 주세요.");
+    }
+
+    _emit(phase, message) {
+      this.phase = phase;
+      this.onState({available: this.available, active: !!this.recognition, recording: phase === "starting" || phase === "listening",
+        processing: phase === "processing", phase, message});
+    }
+
+    _finish(message, abort = false) {
+      const recognition = this.recognition;
+      if (!recognition) return;
+      this.recognition = null;
+      ++this.run;
+      this.host.clearTimeout(this.timer);
+      this.timer = null;
+      if (abort) { try { recognition.abort(); } catch { /* The session is already closed. */ } }
+      this._emit("idle", message);
+    }
+
+    start() {
+      if (!this.available || this.recognition || !this.isAllowed() || this.view.hidden) return false;
+      let recognition;
+      try { recognition = new this.Recognizer(); }
+      catch { this._emit("idle", "브라우저 음성인식을 시작하지 못했습니다. 키보드 마이크를 사용해 주세요."); return false; }
+      this.recognition = recognition;
+      const run = ++this.run;
+      this.accepted = false;
+      recognition.lang = "ko-KR";
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      const current = () => this.recognition === recognition && this.run === run && this.isAllowed() && !this.view.hidden;
+      recognition.onstart = () => { if (current()) this._emit("listening", "듣고 있습니다. 끝나면 ‘말하기 완료’를 누르세요."); };
+      recognition.onresult = (event) => {
+        if (!current() || this.accepted) return;
+        let text = "";
+        for (let index = event.resultIndex || 0; index < (event.results?.length || 0); index++) {
+          const result = event.results[index];
+          if (result?.isFinal) { text = String(result[0]?.transcript || "").trim(); if (text) break; }
+        }
+        if (!text) return;
+        if (text.length > 2000) { this._finish("인식 결과가 너무 깁니다. 짧게 나눠 말해 주세요.", true); return; }
+        this.accepted = true;
+        try { if (this.onTranscript({text}) === false) { this._finish("입력 공간이 부족합니다. 기존 내용을 먼저 정리해 주세요.", true); return; } }
+        catch { this._finish("인식된 글을 넣지 못했습니다. 키보드로 입력해 주세요.", true); return; }
+        this._finish("입력된 글과 받는 직원을 확인한 뒤 맡겨 주세요.", true);
+      };
+      recognition.onerror = (event) => {
+        if (!current()) return;
+        const message = {
+          "not-allowed": "마이크 권한이 거부됐습니다. 브라우저 설정을 확인하거나 키보드 마이크를 사용해 주세요.",
+          "service-not-allowed": "브라우저 음성인식을 사용할 수 없습니다. 키보드 마이크를 사용해 주세요.",
+          "audio-capture": "마이크를 사용할 수 없습니다. 키보드 마이크를 사용해 주세요.",
+          "no-speech": "말소리가 들리지 않았습니다. 다시 누르거나 키보드 마이크를 사용해 주세요.",
+          network: "음성인식 연결이 실패했습니다. 키보드 마이크를 사용해 주세요.",
+        }[event?.error] || "음성인식에 실패했습니다. 키보드 마이크를 사용해 주세요.";
+        this._finish(message, true);
+      };
+      recognition.onend = () => { if (current()) this._finish("말소리를 글자로 확인하지 못했습니다. 다시 누르거나 키보드 마이크를 사용해 주세요."); };
+      this._emit("starting", "브라우저 음성인식을 시작하고 있습니다. 마이크 권한을 허용해 주세요.");
+      this.timer = this.host.setTimeout(() => { if (current()) this._finish("60초가 지나 인식을 중단했습니다. 짧게 나눠 말해 주세요.", true); }, 60000);
+      try { recognition.start(); return true; }
+      catch { this._finish("브라우저 음성인식을 시작하지 못했습니다. 키보드 마이크를 사용해 주세요.", true); return false; }
+    }
+
+    stop() {
+      if (!this.recognition || this.phase === "processing") return false;
+      this._emit("processing", "말씀을 글자로 바꾸고 있습니다.");
+      try { this.recognition.stop(); return true; }
+      catch { this._finish("음성인식을 마치지 못했습니다. 키보드 마이크를 사용해 주세요.", true); return false; }
+    }
+
+    cancel() { this._finish("음성 입력을 취소했습니다.", true); }
+    toggle() { return this.recognition ? this.stop() : this.start(); }
+  }
+  window.DASBrowserSpeechInput = BrowserSpeechInput;
+  let authenticated = false, voiceEnabled = false, readOnly = false, voiceInput = null, voiceState = {}, browserSpeechInput = null, browserSpeechState = {}, routeTimer = null, routeRevision = 0;
+  let pairPublicOrigin = null;
+  let pairRequest = 0, pairExpiresAt = 0, pairTimer = null, pairStartPromise = null, pairClosing = false;
+  let recipientMode = "auto", autoRoute = null;
+
+  function requireLogin({discardDraft = false} = {}) {
+    try {
+      if (discardDraft) sessionStorage.removeItem("daslab.office.authDraft");
+      else if ($("command-input").value.trim()) sessionStorage.setItem("daslab.office.authDraft", JSON.stringify({text: $("command-input").value, recipient: recipientMode, pending: state.pending, savedAt: Date.now()}));
+      sessionStorage.removeItem("daslab.office.voiceDraft");
+    } catch { /* Storage may be disabled by browser policy. */ }
+    authenticated = false;
+    browserSpeechInput?.cancel();
+    voiceInput?.setEnabled(false);
+    state.source?.close();
+    $("command-input").value = "";
+    location.replace("/login");
+  }
 
   function node(tag, className, text) {
     const element = document.createElement(tag);
@@ -55,6 +163,80 @@
     $("toast").hidden = false;
     state.toastTimer = setTimeout(() => { $("toast").hidden = true; }, 4800);
   }
+  function clearPairCode(message = "") {
+    clearTimeout(pairTimer);
+    pairExpiresAt = 0;
+    $("pair-link").value = "";
+    $("pair-qr").replaceChildren();
+    $("copy-pair").disabled = true;
+    $("pair-status").textContent = message;
+  }
+  function markPairClosing() {
+    pairClosing = true;
+    $("pair-device").disabled = true;
+    $("revoke-devices").disabled = true;
+  }
+  let qrLoadPromise = null;
+  function ensureQRGenerator() {
+    if (typeof window.qrcode === "function") return Promise.resolve();
+    if (!qrLoadPromise) qrLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/qr-code.js";
+      script.onload = () => typeof window.qrcode === "function" ? resolve() : reject(new Error("QR 코드를 만들지 못했습니다."));
+      script.onerror = () => reject(new Error("QR 코드를 불러오지 못했습니다."));
+      document.head.append(script);
+    }).catch((error) => { qrLoadPromise = null; throw error; });
+    return qrLoadPromise;
+  }
+  function drawPairCode(url) {
+    if (typeof window.qrcode !== "function") throw new Error("QR 코드를 만들지 못했습니다. 아래 주소를 복사해 주세요.");
+    const qr = window.qrcode(0, "M");
+    qr.addData(url);
+    qr.make();
+    const quietZone = 4, cell = 5, count = qr.getModuleCount();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = (count + quietZone * 2) * cell;
+    canvas.setAttribute("aria-hidden", "true");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("QR 코드를 표시하지 못했습니다. 아래 주소를 복사해 주세요.");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#080d1a";
+    for (let row = 0; row < count; row++) for (let col = 0; col < count; col++) {
+      if (qr.isDark(row, col)) context.fillRect((col + quietZone) * cell, (row + quietZone) * cell, cell, cell);
+    }
+    $("pair-qr").replaceChildren(canvas);
+  }
+  async function startPairing() {
+    if (!authenticated || readOnly || $("pair-device").hidden || pairClosing || pairStartPromise) return;
+    const serial = ++pairRequest;
+    const dialog = $("pair-dialog");
+    clearPairCode("연결 코드를 준비합니다.");
+    if (!dialog.open) dialog.showModal();
+    $("pair-device").disabled = true;
+    $("revoke-devices").disabled = true;
+    try {
+      const issued = request("/api/owner/pair/start", {});
+      pairStartPromise = issued;
+      const result = await issued;
+      if (serial !== pairRequest || !dialog.open) return;
+      const link = new URL(result.url);
+      if (link.protocol !== "https:" || link.origin !== pairPublicOrigin || link.username || link.password || link.pathname !== "/login" || link.search || !/^#pair=[A-Za-z0-9_-]{43}$/.test(link.hash)) throw new Error("연결 주소를 확인하지 못했습니다.");
+      pairExpiresAt = Number(result.expires_at) * 1000;
+      if (!Number.isFinite(pairExpiresAt) || pairExpiresAt <= Date.now()) throw new Error("연결 코드의 유효 시간을 확인하지 못했습니다.");
+      $("pair-link").value = link.href;
+      $("copy-pair").disabled = false;
+      try {
+        await ensureQRGenerator();
+        if (serial !== pairRequest || !dialog.open) return;
+        drawPairCode(link.href);
+        $("pair-status").textContent = "이 QR 코드는 10분 뒤 만료됩니다.";
+      } catch (error) { $("pair-status").textContent = error.message; }
+      pairTimer = setTimeout(() => clearPairCode("연결 코드가 만료됐습니다. ‘휴대폰 연결’을 다시 눌러 주세요."), Math.max(0, pairExpiresAt - Date.now()));
+    } catch (error) {
+      if (serial === pairRequest && dialog.open) clearPairCode(error.message || "연결 코드를 준비하지 못했습니다.");
+    } finally { pairStartPromise = null; $("pair-device").disabled = pairClosing; $("revoke-devices").disabled = pairClosing; }
+  }
   function setConnection(connected, label) {
     state.connected = connected;
     $("reconnect").className = `connection ${connected ? "connected" : "offline"}`;
@@ -62,6 +244,7 @@
   }
   async function request(path, body) {
     const response = await fetch(path, body === undefined ? { cache: "no-store" } : { method: "POST", headers: { "Content-Type": "application/json", "X-DAS-Office": "1" }, body: JSON.stringify(body) });
+    if (response.status === 401) { requireLogin(); throw new Error("다시 로그인해 주세요."); }
     let result;
     try { result = await response.json(); } catch { throw new Error("서버 응답을 읽지 못했습니다. 연결을 확인해 주세요."); }
     if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : result.error?.message || result.message || `요청을 처리하지 못했습니다 (${response.status}).`);
@@ -102,12 +285,13 @@
     state.source?.close();
     const source = new EventSource("/api/org/events");
     state.source = source;
+    source.addEventListener("auth-required", requireLogin);
     source.addEventListener("open", () => { setConnection(true); });
     source.addEventListener("snapshot", (event) => {
       try { acceptSnapshot(JSON.parse(event.data)); setConnection(true); }
       catch (error) { notice(error.message); }
     });
-    source.addEventListener("error", () => { setConnection(false); notice("실시간 연결이 끊어졌습니다. 자동으로 다시 연결하며, 현재 화면은 마지막 수신 상태입니다."); });
+    source.addEventListener("error", () => { setConnection(false); notice("실시간 연결이 끊어졌습니다. 자동으로 다시 연결하며, 현재 화면은 마지막 수신 상태입니다."); checkAuth().catch(() => {}); });
   }
 
   function renderMetrics() {
@@ -127,6 +311,7 @@
   function chooseEmployee(id, focusComposer = false) {
     if (!employee(id) || employee(id).kind === "owner") return;
     state.selected = id;
+    if (focusComposer) { recipientMode = id; ++routeRevision; }
     renderTree(); renderInspector(); renderRecipient();
     if (focusComposer) { $("command-input").scrollIntoView({ behavior: "smooth", block: "center" }); $("command-input").focus({ preventScroll: true }); }
   }
@@ -162,13 +347,60 @@
     replace($("organization-tree"), wrapper);
   }
   function renderRecipient() {
-    const previous = $("recipient").value;
     const staff = state.snapshot.employees.filter((item) => item.kind !== "owner");
-    replace($("recipient"), ...staff.map((item) => { const option = node("option", "", `${item.name}${item.kind === "assistant" ? " · 자동 배정" : ""}`); option.value = item.id; return option; }));
-    $("recipient").value = state.selected || previous || "assistant";
+    const automatic = node("option", "", `자동 선택${autoRoute && !autoRoute.needs_clarification ? ` · ${employeeName(autoRoute.employee_id)}` : " · 기본 PM"}`); automatic.value = "auto";
+    replace($("recipient"), automatic, ...staff.map((item) => { const option = node("option", "", item.name); option.value = item.id; return option; }));
+    $("recipient").value = recipientMode;
     $("recipient").disabled = state.submitting;
-    $("command-submit").disabled = state.submitting;
-    for (const anchor of document.querySelectorAll('a[href^="/voice/"]')) anchor.href = `/voice/?office=1&employee=${encodeURIComponent(state.selected || "assistant")}`;
+    updateComposer();
+  }
+  function updateComposer() {
+    const recording = voiceState.recording || voiceState.busy;
+    const browserBusy = browserSpeechState.active === true;
+    $("command-submit").disabled = readOnly || state.submitting || !state.snapshot || !authenticated || recording || browserBusy;
+    $("keyboard-dictation").disabled = readOnly || state.submitting || !state.snapshot || !authenticated;
+    $("keyboard-dictation").classList.toggle("primary", browserSpeechState.available === false);
+    $("browser-speech-toggle").hidden = browserSpeechState.available === false;
+    $("browser-speech-toggle").disabled = readOnly || state.submitting || !state.snapshot || !authenticated || !voiceEnabled || recording || browserSpeechState.processing || browserSpeechState.available !== true;
+    $("browser-speech-toggle").textContent = browserSpeechState.recording ? "■ 말하기 완료" : browserSpeechState.processing ? "음성 처리 중…" : "🎙 말로 입력";
+    $("browser-speech-toggle").setAttribute("aria-pressed", String(browserBusy));
+    $("browser-speech-cancel").hidden = !browserBusy;
+    $("voice-toggle").disabled = readOnly || state.submitting || !authenticated || !voiceEnabled || browserBusy || !(voiceState.canStart || voiceState.canStop);
+    $("voice-toggle").textContent = voiceState.recording ? "■ 말하기 완료" : voiceState.busy ? "음성 처리 중…" : "◉ 말로 입력";
+    $("voice-toggle").setAttribute("aria-pressed", String(!!voiceState.recording));
+    $("voice-cancel").hidden = !voiceState.canCancel;
+    if (recipientMode !== "auto") $("recipient-hint").textContent = `${employeeName(recipientMode)}에게 보냅니다. 직접 선택한 직원이 우선입니다.`;
+    else if (autoRoute?.needs_clarification) $("recipient-hint").textContent = "여러 직원을 부르셨습니다. 받는 직원 한 명을 직접 선택해 주세요.";
+    else if (autoRoute) $("recipient-hint").textContent = `${employeeName(autoRoute.employee_id)}에게 보낼 예정입니다.${autoRoute.status === "default" ? " 직원을 부르지 않으면 PM이 받습니다." : ""} 내용을 확인하고 맡겨 주세요.`;
+    else $("recipient-hint").textContent = "“PM, 이 일 해줘”처럼 부르면 직원을 자동으로 고릅니다. 내용을 확인하고 맡겨 주세요.";
+  }
+  async function routeDraft() {
+    clearTimeout(routeTimer);
+    const revision = ++routeRevision, text = $("command-input").value;
+    if (recipientMode !== "auto" || !text.trim()) { autoRoute = null; if (state.snapshot) renderRecipient(); return null; }
+    const result = await request("/api/org/route", {text, auto: true});
+    if (revision !== routeRevision || text !== $("command-input").value || recipientMode !== "auto") return null;
+    autoRoute = result; renderRecipient(); return result;
+  }
+  async function checkAuth() {
+    const status = await request("/api/auth");
+    if (!status.authenticated) { requireLogin(); return false; }
+    authenticated = true;
+    readOnly = status.read_only === true;
+    voiceEnabled = !readOnly && status.voice_enabled !== false;
+    $("auth-label").textContent = status.mode === "github" ? `@${status.user.login}` : status.mode === "pairing" ? "연결된 기기" : readOnly ? "읽기 전용 미리보기" : "이 PC에서 사용 중";
+    $("logout").hidden = status.mode !== "github" && status.mode !== "pairing";
+    pairPublicOrigin = null;
+    if (typeof status.public_origin === "string") {
+      try {
+        const configured = new URL(status.public_origin);
+        if (configured.protocol === "https:" && configured.origin === status.public_origin && !configured.username && !configured.password) pairPublicOrigin = configured.origin;
+      } catch { /* An invalid public origin must keep phone pairing disabled. */ }
+    }
+    $("pair-device").hidden = status.mode !== "local" || readOnly || status.pairing_available !== true || !pairPublicOrigin;
+    $("revoke-devices").hidden = $("pair-device").hidden;
+    voiceInput?.setEnabled(voiceEnabled);
+    return true;
   }
   function staffMeta(label, value) { return append(node("div", "staff-meta"), node("span", "", label), node("strong", "", value)); }
   function renderInspector() {
@@ -573,24 +805,30 @@
   }
 
   $("command-form").addEventListener("submit", async (event) => {
-    event.preventDefault(); if (state.submitting || !state.snapshot) return;
-    const text = $("command-input").value.trim(); const recipient = $("recipient").value;
+    event.preventDefault(); if (readOnly || state.submitting || !state.snapshot || !authenticated || voiceState.busy || voiceState.recording || browserSpeechState.active) return;
+    const text = $("command-input").value.trim(); const recipient = recipientMode;
     if (!text) { $("command-input").focus(); return; }
     const signature = JSON.stringify([text, recipient]);
     if (!state.pending || state.pending.signature !== signature) state.pending = { signature, request_id: typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `office-${Date.now()}-${Math.random().toString(36).slice(2)}` };
     state.submitting = true; $("command-input").readOnly = true; $("command-submit").disabled = true; $("recipient").disabled = true; $("command-submit").textContent = "업무를 전달하고 있습니다…"; $("command-error").hidden = true;
+    updateComposer();
     try {
-      const result = await request("/api/org/missions", { text, employee_id: recipient, request_id: state.pending.request_id, context: { project_id: "office-ui" } });
-      $("command-input").value = ""; state.pending = null;
+      if (recipient === "auto") {
+        const routed = await routeDraft();
+        if (!routed || routed.needs_clarification) throw new Error("받는 직원 한 명을 선택해 주세요.");
+      }
+      const result = await request("/api/org/missions", { text, employee_id: recipient === "auto" ? autoRoute.employee_id : recipient, auto_recipient: recipient === "auto", request_id: state.pending.request_id, context: { project_id: "office-ui" } });
+      $("command-input").value = ""; state.pending = null; autoRoute = null; ++routeRevision; voiceInput?.acknowledgeDraft();
       await loadSnapshot().catch(() => {});
       if (result.mission?.employee_id) chooseEmployee(result.mission.employee_id);
       toast(result.duplicate ? "이미 접수된 미션을 확인했습니다. 중복 실행하지 않습니다." : `${employeeName(result.mission?.employee_id)}에게 업무를 전달했습니다.`);
       $("missions").scrollIntoView({ behavior: "smooth", block: "center" });
     } catch (error) { $("command-error").textContent = `${error.message} 같은 내용으로 다시 누르면 중복 접수를 방지합니다.`; $("command-error").hidden = false; }
-    finally { state.submitting = false; $("command-input").readOnly = false; $("command-submit").disabled = !state.snapshot; $("recipient").disabled = !state.snapshot; $("command-submit").textContent = "업무 맡기기 ↗"; }
+    finally { state.submitting = false; $("command-input").readOnly = false; $("recipient").disabled = !state.snapshot; $("command-submit").textContent = "업무 맡기기 ↗"; updateComposer(); }
   });
   $("command-input").addEventListener("keydown", (event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); $("command-form").requestSubmit(); } });
-  $("recipient").addEventListener("change", () => chooseEmployee($("recipient").value));
+  $("command-input").addEventListener("input", () => { ++routeRevision; autoRoute = null; clearTimeout(routeTimer); updateComposer(); routeTimer = setTimeout(() => routeDraft().catch(() => { $("recipient-hint").textContent = "직원 선택을 확인하지 못했습니다. 직접 선택하거나 다시 시도해 주세요."; }), 350); });
+  $("recipient").addEventListener("change", () => { recipientMode = $("recipient").value; ++routeRevision; if (recipientMode !== "auto") chooseEmployee(recipientMode); else routeDraft().catch(() => {}); updateComposer(); });
   $("assign-selected").addEventListener("click", () => chooseEmployee(state.selected, true));
   $("mission-filter").addEventListener("change", () => { state.filter = $("mission-filter").value; if (state.snapshot) renderMissions(); });
   $("close-mission").addEventListener("click", () => $("mission-dialog").close());
@@ -604,18 +842,120 @@
       if (index >= 0) { event.preventDefault(); tabs[index].click(); tabs[index].focus(); }
     });
   }
-  $("reconnect").addEventListener("click", async () => { setConnection(false, "연결 확인 중"); try { await loadSnapshot(); connectStream(); } catch {} });
+  $("reconnect").addEventListener("click", async () => { setConnection(false, "연결 확인 중"); try { if (await checkAuth()) { await loadSnapshot(); connectStream(); } } catch {} });
   $("today").textContent = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "short" }).format(new Date());
   try {
     const saved = sessionStorage.getItem("daslab.office.voiceDraft");
     if (saved) {
       const draft = JSON.parse(saved);
-      if (typeof draft.text === "string" && draft.text.trim()) { state.voiceDraft = draft; $("command-input").value = draft.text.slice(0, 6000); if (typeof draft.employee_id === "string") state.selected = draft.employee_id; }
+      if (typeof draft.text === "string" && draft.text.trim()) { state.voiceDraft = draft; $("command-input").value = draft.text.slice(0, 6000); if (typeof draft.employee_id === "string") { state.selected = draft.employee_id; recipientMode = draft.employee_id; } }
       sessionStorage.removeItem("daslab.office.voiceDraft");
     }
   } catch { notice("음성 초안을 불러오지 못했습니다. 음성 화면의 텍스트를 직접 옮길 수 있습니다."); }
-  loadSnapshot().then(() => { if (state.voiceDraft) { toast("음성 내용을 가져왔습니다. 확인한 뒤 ‘업무 맡기기’를 눌러 주세요."); $("command-input").focus(); } }).catch(() => {}).finally(connectStream);
+  function appendDictationTranscript({text}) {
+    const input = $("command-input");
+    const combined = [input.value.trim(), text].filter(Boolean).join("\n");
+    if (combined.length > input.maxLength) { toast("입력 공간이 부족합니다. 기존 내용을 먼저 정리한 뒤 다시 말해 주세요."); return false; }
+    input.value = combined;
+    ++routeRevision;
+    routeDraft().catch(() => { $("recipient-hint").textContent = "받는 직원을 직접 선택해 주세요."; });
+    toast("말씀을 입력했습니다. 내용과 받는 직원을 확인하고 맡겨 주세요.");
+    return true;
+  }
+  voiceInput = new window.DASVoiceInput.InlineVoiceInput({
+    isAuthenticated: () => authenticated && voiceEnabled,
+    onState: (value) => { voiceState = value; $("voice-status").textContent = readOnly ? "미리보기에서는 음성 입력을 사용할 수 없습니다." : value.message; updateComposer(); },
+    onTranscript: appendDictationTranscript,
+  });
+  browserSpeechInput = new BrowserSpeechInput({
+    isAllowed: () => authenticated && voiceEnabled && !readOnly && !state.submitting,
+    onState: (value) => { browserSpeechState = value; $("browser-speech-status").textContent = readOnly ? "미리보기에서는 음성 입력을 사용할 수 없습니다." : value.message; updateComposer(); },
+    onTranscript: appendDictationTranscript,
+  });
+  $("keyboard-dictation").addEventListener("click", () => {
+    browserSpeechInput.cancel();
+    if (voiceState.recording || voiceState.busy) void voiceInput.cancel();
+    $("command-input").focus();
+  });
+  $("local-voice-disclosure").addEventListener("click", () => {
+    const expanded = $("local-voice-disclosure").getAttribute("aria-expanded") === "true";
+    $("local-voice-disclosure").setAttribute("aria-expanded", String(!expanded));
+    $("local-voice-disclosure").textContent = expanded ? "앱 자체 음성인식 (실험) 펼치기" : "앱 자체 음성인식 (실험) 접기";
+    $("inline-voice").classList.toggle("mobile-expanded", !expanded);
+    if (expanded) void voiceInput.cancel();
+  });
+  $("browser-speech-toggle").addEventListener("click", () => { if (!voiceState.recording && !voiceState.busy) browserSpeechInput.toggle(); });
+  $("browser-speech-cancel").addEventListener("click", () => browserSpeechInput.cancel());
+  $("voice-toggle").addEventListener("click", () => { if (!browserSpeechState.active) voiceInput.toggle(); });
+  $("voice-cancel").addEventListener("click", () => voiceInput.cancel());
+  $("pair-device").addEventListener("click", startPairing);
+  $("revoke-devices").addEventListener("click", async () => {
+    if (!authenticated || $("revoke-devices").hidden || !confirm("연결된 모든 휴대폰의 로그인을 해제할까요? 다시 연결하려면 새 QR 코드를 스캔해야 합니다.")) return;
+    $("revoke-devices").disabled = true;
+    $("pair-device").disabled = true;
+    try {
+      const result = await request("/api/owner/pair/revoke-all", {});
+      ++pairRequest;
+      clearPairCode();
+      if ($("pair-dialog").open) { markPairClosing(); $("pair-dialog").close(); }
+      toast(`연결된 휴대폰 ${Number(result.revoked_count) || 0}대의 로그인을 해제했습니다.`);
+    } catch (error) { notice(error.message); }
+    finally { $("revoke-devices").disabled = pairClosing; $("pair-device").disabled = pairClosing; }
+  });
+  $("close-pair").addEventListener("click", () => { markPairClosing(); $("pair-dialog").close(); });
+  $("pair-dialog").addEventListener("cancel", markPairClosing);
+  $("pair-dialog").addEventListener("close", async () => {
+    ++pairRequest;
+    clearPairCode();
+    markPairClosing();
+    try {
+      // Wait for a late start response before invalidating the pending token.
+      if (pairStartPromise) await pairStartPromise.catch(() => {});
+      await request("/api/owner/pair/cancel", {});
+    } catch { notice("연결 코드를 바로 해제하지 못했습니다. 10분 뒤 만료됩니다."); }
+    finally { pairClosing = false; $("pair-device").disabled = false; $("revoke-devices").disabled = false; }
+  });
+  $("copy-pair").addEventListener("click", async () => {
+    if (!pairExpiresAt || pairExpiresAt <= Date.now()) { clearPairCode("연결 코드가 만료됐습니다. ‘휴대폰 연결’을 다시 눌러 주세요."); return; }
+    const link = $("pair-link");
+    try {
+      await navigator.clipboard.writeText(link.value);
+      $("pair-status").textContent = "주소를 복사했습니다. 휴대폰에서 열어 주세요.";
+    } catch {
+      link.select();
+      $("pair-status").textContent = "주소를 선택했습니다. 복사해서 휴대폰에서 열어 주세요.";
+    }
+  });
+  $("logout").addEventListener("click", async () => {
+    browserSpeechInput.cancel();
+    voiceInput.setEnabled(false);
+    $("logout").disabled = true;
+    try {
+      const response = await fetch("/auth/logout", {method: "POST", headers: {"Content-Type": "application/json", "X-DAS-Office": "1"}, body: "{}"});
+      if (!response.ok) throw new Error("로그아웃하지 못했습니다. 다시 눌러 주세요.");
+      requireLogin({discardDraft: true});
+    } catch (error) { notice(error.message); $("logout").disabled = false; voiceInput.setEnabled(authenticated); }
+  });
+  checkAuth().then(async (allowed) => {
+    if (!allowed) return;
+    await loadSnapshot();
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("daslab.office.authDraft") || "null");
+      sessionStorage.removeItem("daslab.office.authDraft");
+      if (saved && typeof saved.text === "string" && Date.now() - saved.savedAt < 86400000 && !$("command-input").value) {
+        $("command-input").value = saved.text.slice(0, 6000);
+        recipientMode = saved.recipient === "auto" || employee(saved.recipient) ? saved.recipient : "auto";
+        const signature = JSON.stringify([$("command-input").value.trim(), recipientMode]);
+        if (saved.pending?.signature === signature && typeof saved.pending.request_id === "string" && saved.pending.request_id.length <= 100) state.pending = saved.pending;
+        renderRecipient(); await routeDraft();
+        toast("로그인 전에 작성하던 내용을 복구했습니다.");
+      }
+    } catch { /* A malformed or unavailable local draft must not prevent loading. */ }
+    if (state.voiceDraft) { toast("음성 내용을 가져왔습니다. 확인한 뒤 ‘업무 맡기기’를 눌러 주세요."); $("command-input").focus(); }
+    connectStream();
+  }).catch(() => {});
   setInterval(() => { if (!state.snapshot || !state.connected) return; for (const element of document.querySelectorAll("[data-mission-time]")) { const mission = state.snapshot.missions.find((item) => item.id === element.dataset.missionTime); if (mission) element.textContent = `실행 ${missionDuration(mission)}`; } }, 1000);
-  window.addEventListener("pagehide", () => state.source?.close());
-  window.addEventListener("pageshow", (event) => { if (event.persisted) { loadSnapshot().catch(() => {}); connectStream(); } });
+  window.addEventListener("pagehide", () => { browserSpeechInput.cancel(); state.source?.close(); });
+  window.addEventListener("pageshow", (event) => { if (event.persisted) checkAuth().then((allowed) => { if (allowed) { loadSnapshot().catch(() => {}); connectStream(); } }).catch(() => {}); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) browserSpeechInput.cancel(); else checkAuth().catch(() => {}); });
 })();

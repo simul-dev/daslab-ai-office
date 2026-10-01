@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .process_env import child_env, require_clean_process_env
+
 
 class BrowserUnavailable(RuntimeError):
     pass
@@ -53,7 +55,7 @@ def _artifacts(value):
         if (not parts or any(not part or part in ('.', '..') or ':' in part or '\\' in part
                              or part.endswith((' ', '.')) for part in parts)
                 or not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest)
-                or (name not in ('office.html', 'office.css', 'office.js')
+                or (name not in ('office.html', 'office.css', 'office.js', 'voice-input.js')
                     and not (name.startswith('brand/') and Path(name).suffix.lower()
                              in {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.ico', '.woff2'}))):
             raise ValueError('Invalid pinned preview artifact')
@@ -230,13 +232,14 @@ class BrowserVerifier:
         expected_origin = _origin(url)
         blocked, page_errors, http_errors = [], [], []
         browser = None
+        require_clean_process_env()
         manager = async_playwright()
         playwright = await manager.start()
         try:
             channel = _installed_browser()
             try:
                 browser = await playwright.chromium.launch(
-                    headless=True, channel=channel, timeout=12000,
+                    headless=True, channel=channel, timeout=12000, env=child_env(),
                     args=['--disable-background-networking', '--disable-component-update',
                           '--dns-prefetch-disable',
                           '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'])
@@ -307,11 +310,21 @@ class BrowserVerifier:
                 card = cards.nth(1)
                 expected_id = await card.get_attribute('data-employee-id')
                 expected_name = await card.locator('.node-name').inner_text()
+                automatic_recipient = await page.locator('#recipient option[value="auto"]').count()
+                prior_recipient = await page.locator('#recipient').input_value() if automatic_recipient else None
                 await card.click()
                 await page.wait_for_function('(id) => document.querySelector("#employee-panel").dataset.person === id', arg=expected_id)
                 if await page.locator('#employee-name').inner_text() != expected_name:
                     raise ValueError('Selected employee detail does not match the card')
+                if automatic_recipient and await page.locator('#recipient').input_value() != prior_recipient:
+                    raise ValueError('Inspecting an employee unexpectedly changed the command recipient')
                 return expected_name
+
+            async def voice_boundary():
+                toggle = page.locator('#voice-toggle')
+                if await toggle.count() and not await toggle.is_disabled():
+                    raise ValueError('Voice input must stay disabled in a read-only preview')
+                return 'Voice controls disabled; no microphone, model initialization or voice request exercised'
 
             async def tabs():
                 for name in ('memory', 'performance', 'work'):
@@ -358,6 +371,7 @@ class BrowserVerifier:
             await check('images', images)
             await check('keyboard_desktop', lambda: keyboard(1440, 1000, 'desktop'))
             await check('employee_selection', selection)
+            await check('voice_preview_boundary', voice_boundary)
             await check('employee_tabs', tabs)
             await check('desktop_layout', lambda: layout(1440, 1000, 'desktop'))
             await check('keyboard_mobile', lambda: keyboard(390, 844, 'mobile'))

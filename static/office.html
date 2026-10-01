@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#080d1a">
   <title>DAS Lab · AI 오피스</title>
   <link rel="stylesheet" href="/office.css">
+  <script src="/voice-input.js" defer></script>
   <script src="/office.js" defer></script>
 </head>
 <body>
@@ -18,23 +19,25 @@
     <a class="nav-link" href="#missions"><span aria-hidden="true">▤</span> 미션과 결과</a>
     <a class="nav-link" href="#execution"><span aria-hidden="true">⌁</span> 실행 관리</a>
     <div class="sidebar-divider"></div>
-    <a class="nav-link secondary" href="/voice/?office=1"><span aria-hidden="true">◉</span> 음성으로 지시 <span class="optional">선택</span></a>
     <div class="sidebar-note"><span class="note-mark" aria-hidden="true">↗</span><strong>방향을 정하면,<br>담당자와 결과가 이어집니다.</strong><p>지시 · 배정 · 실행 · 보고<br>하나의 업무 흐름으로.</p></div>
     <div class="owner-profile"><span class="owner-avatar">나</span><div><strong>대표 워크스페이스</strong><small>최종 의사결정 · 감독</small></div></div>
   </aside>
   <main id="workspace" tabindex="-1">
-    <header class="topbar"><div><span class="breadcrumb">DAS Lab</span><span class="divider">/</span><strong>조직 운영</strong></div><div class="topbar-right"><span id="today" class="today"></span><button id="reconnect" class="connection" type="button" title="연결 상태 확인"><span class="status-dot"></span><span id="connection-label">연결 중</span></button></div></header>
+    <header class="topbar"><div><span class="breadcrumb">DAS Lab</span><span class="divider">/</span><strong>조직 운영</strong></div><div class="topbar-right"><span id="today" class="today"></span><span id="auth-label" class="small muted"></span><button id="pair-device" class="button" type="button" hidden>휴대폰 연결</button><button id="revoke-devices" class="button" type="button" hidden>연결 해제</button><button id="logout" class="button" type="button" hidden>로그아웃</button><button id="reconnect" class="connection" type="button" title="연결 상태 확인"><span class="status-dot"></span><span id="connection-label">연결 중</span></button></div></header>
     <div class="page">
-      <section class="page-heading"><div><div class="eyebrow">DAS LAB / ORGANIZATION</div><h1>팀의 업무를 한눈에.</h1><p>조직과 실행 상태를 살펴보고, 다음 업무의 방향을 정하세요.</p></div><a href="/voice/?office=1" class="button voice-button"><span aria-hidden="true">◉</span> 음성으로 이야기하기</a></section>
+      <section class="page-heading"><div><div class="eyebrow">DAS LAB / ORGANIZATION</div><h1>팀의 업무를 한눈에.</h1><p>조직과 실행 상태를 살펴보고, 다음 업무의 방향을 정하세요.</p></div></section>
       <div id="page-error" class="notice error" role="alert" hidden></div>
 
       <section class="command-card" aria-label="직원에게 업무 지시">
         <form id="command-form">
           <div class="command-label"><span class="compose-mark" aria-hidden="true">↗</span><label for="command-input">어떤 일을 맡길까요?</label><span>평소 말하듯 적어 주세요</span></div>
           <textarea id="command-input" rows="2" maxlength="6000" required placeholder="예: 공급망 데모의 개선 우선순위 세 가지를 정리하고, 홍보에 쓸 핵심 메시지도 제안해 줘."></textarea>
+          <div class="mobile-dictation"><div class="mobile-dictation-actions"><button id="browser-speech-toggle" class="button primary" type="button" disabled>🎙 말로 입력</button><button id="browser-speech-cancel" class="button" type="button" hidden>음성 입력 취소</button><button id="keyboard-dictation" class="button" type="button">키보드 마이크 사용</button></div><span id="browser-speech-status" class="small muted" role="status" aria-live="polite">브라우저 음성인식을 준비 중입니다.</span><span class="small muted">브라우저가 음성을 제공업체 서버에서 처리할 수 있습니다. 글과 받는 직원을 확인한 뒤 맡겨 주세요. 키보드 마이크는 키보드 앱의 정책을 따릅니다.</span></div>
+          <button id="local-voice-disclosure" class="button mobile-local-voice" type="button" aria-expanded="false" aria-controls="inline-voice">앱 자체 음성인식 (실험) 펼치기</button>
+          <div id="inline-voice" class="inline-voice"><button id="voice-toggle" class="button" type="button" disabled aria-pressed="false">◉ 말로 입력</button><button id="voice-cancel" class="button" type="button" hidden>음성 입력 취소</button><span id="voice-status" class="small muted" role="status" aria-live="polite">마이크를 누르면 시작합니다. 목소리 등록은 필요 없습니다.</span></div>
           <div class="command-bottom"><label class="recipient-label" for="recipient">받는 직원 <select id="recipient" name="employee_id" aria-label="업무를 받을 직원" disabled><option value="">직원을 불러오는 중</option></select></label><div class="command-submit"><span class="keyboard-hint">Ctrl + Enter</span><button id="command-submit" class="button primary" type="submit" disabled>업무 맡기기 <span aria-hidden="true">↗</span></button></div></div>
           <div id="command-error" class="form-error" role="alert" hidden></div>
-          <p class="small muted command-note">선택한 직원에게 요청과 결과가 연결됩니다.</p>
+          <p id="recipient-hint" class="small muted command-note" role="status">“PM, 이 일 해줘”처럼 부르면 받는 직원을 자동으로 고릅니다. 내용을 확인하고 맡겨 주세요.</p>
         </form>
       </section>
 
@@ -78,6 +81,7 @@
 </div>
 
 <dialog id="mission-dialog" class="mission-dialog" aria-labelledby="detail-title"><div class="dialog-topbar"><span class="eyebrow">MISSION BRIEF</span><button type="button" id="close-mission" class="icon-button" aria-label="미션 상세 닫기">×</button></div><div id="mission-detail"></div></dialog>
+<dialog id="pair-dialog" class="pair-dialog" aria-labelledby="pair-title"><div class="dialog-topbar"><span class="eyebrow">PHONE ACCESS</span><button type="button" id="close-pair" class="icon-button" aria-label="휴대폰 연결 닫기">×</button></div><div class="pair-body"><h2 id="pair-title">휴대폰 연결</h2><p>휴대폰 카메라로 QR 코드를 스캔하세요. 이 휴대폰에서는 30일 동안 로그인 상태가 유지됩니다. 이후 다시 연결하세요.</p><div id="pair-qr" class="pair-qr" role="img" aria-label="휴대폰 연결 QR 코드"></div><label class="pair-link-label" for="pair-link">QR이 안 보이면 연결 주소를 복사하세요</label><div class="pair-link-row"><input id="pair-link" type="text" readonly autocomplete="off" spellcheck="false" aria-label="일회용 휴대폰 연결 주소"><button id="copy-pair" class="button" type="button">주소 복사</button></div><p id="pair-status" class="small muted" role="status" aria-live="polite">연결 코드를 준비합니다.</p><p class="small muted">이 연결 코드는 10분 동안 한 번만 사용할 수 있습니다. 다른 사람에게 보여주지 마세요.</p></div></dialog>
 <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>
