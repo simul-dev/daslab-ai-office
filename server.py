@@ -146,8 +146,10 @@ class OfficeHTTPServer(ThreadingHTTPServer):
             self._request_slots.release()
 
 
-def handler_for(office, organization=None, auth=None):
+def handler_for(office, organization=None, auth=None, next_gateway=None):
     auth = auth or OfficeAuth()
+    # Both listeners show the same new office when explicitly enabled. The
+    # original engine, scheduler APIs and /office.html remain available.
     stream_slots = threading.BoundedSemaphore(12)
 
     class Handler(BaseHTTPRequestHandler):
@@ -198,6 +200,17 @@ def handler_for(office, organization=None, auth=None):
                     shutil.copyfileobj(stream, self.wfile, length=128 * 1024)
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
+
+        def respond_next(self, response):
+            self.send_response(response.status)
+            self.send_header("Content-Length", str(len(response.body)))
+            for name, value in response.headers.items():
+                self.send_header(name, value)
+            self.end_headers()
+            try:
+                self.wfile.write(response.body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
 
         def redirect(self, location, cookies=()):
             self.send_response(303)
@@ -289,13 +302,39 @@ def handler_for(office, organization=None, auth=None):
                     self.respond(200, {"authenticated": result["authenticated"], "user": result["user"]},
                                  cookies=result["cookies"])
                     return
+                if not write and path in ("/brand/daslab-dark.png", "/brand/daslab-light.png"):
+                    asset = brand_asset(path)
+                    if asset is None:
+                        self.respond(404, {"error": "로고를 찾을 수 없습니다."})
+                    else:
+                        location, mime = asset
+                        self.respond(200, location.read_bytes(), mime)
+                    return
                 if auth.current_user(cookie) is None:
-                    if not write and path in ("/", "/index.html", "/legacy", "/voice", "/voice/"):
+                    if not write and path in ("/", "/index.html", "/office.html", "/legacy", "/voice", "/voice/"):
                         self.redirect("/login")
                     else:
                         self.respond(401, {"error": "로그인이 필요합니다.", "login_url": "/login"})
                     return
                 body = self.json_body() if write else {}
+                method = "POST" if write else "GET"
+                if (next_gateway is not None and not write and path in ("/", "/index.html")
+                        and self.path != path):
+                    # Query-bearing bookmarks must not fall back to the old UI.
+                    self.redirect("/")
+                    return
+                if next_gateway is not None and next_gateway.handles(method, self.path):
+                    if write and self.headers.get("X-Office-Next") != "1":
+                        raise PermissionError("새 사무실 화면에서 업무를 맡겨 주세요.")
+                    if (write and auth.mode == "local"
+                            and self.headers.get("Origin") != "http://" + self.headers.get("Host", "")):
+                        raise PermissionError("PC의 같은 웹 화면에서 업무를 맡겨 주세요.")
+                    response = next_gateway.request(
+                        method, self.path,
+                        json.dumps(body, ensure_ascii=False).encode("utf-8") if write else b"",
+                        mutation_authorized=write)
+                    self.respond_next(response)
+                    return
                 if write and path == "/auth/logout":
                     result = auth.logout(cookie)
                     self.redirect("/login", result.get("cookies", ()))
@@ -428,7 +467,7 @@ def handler_for(office, organization=None, auth=None):
                     else:
                         asset_path, content_type = asset
                         self.respond(200, asset_path.read_bytes(), content_type)
-                elif not write and path in ("/", "/index.html", "/legacy", "/styles.css", "/app.js", "/office.css", "/office.js", "/voice-input.js", "/qr-code.js"):
+                elif not write and path in ("/", "/index.html", "/office.html", "/legacy", "/styles.css", "/app.js", "/office.css", "/office.js", "/voice-input.js", "/qr-code.js"):
                     name = "office.html" if organization is not None and path in ("/", "/index.html") else "index.html" if path in ("/", "/legacy") else path[1:]
                     mime = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}[Path(name).suffix]
                     self.respond(200, (ROOT / "static" / name).read_bytes(), mime + "; charset=utf-8", voice=name == "office.html")
@@ -470,12 +509,12 @@ def _listener_configuration(port, auth, public_port=None):
     return [(port, local), (public_port, auth)]
 
 
-def _bind_listeners(office, organization, configuration):
+def _bind_listeners(office, organization, configuration, *, next_gateway=None):
     """Bind all sockets before serving; roll back a partially bound pair."""
     servers = []
     try:
         for port, auth in configuration:
-            server = OfficeHTTPServer(("127.0.0.1", port), handler_for(office, organization, auth))
+            server = OfficeHTTPServer(("127.0.0.1", port), handler_for(office, organization, auth, next_gateway))
             server.daemon_threads = True
             servers.append(server)
         return servers
@@ -512,6 +551,8 @@ def main():
                         help="선택적 인증 전용 loopback 포트. --port는 기존 로컬 접속에 유지합니다.")
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
     parser.add_argument("--auth-config", type=Path, default=ROOT / "config" / "auth.json")
+    parser.add_argument("--office-next", action="store_true",
+                        help="PC와 인증된 공개 접속에 같은 새 사무실을 표시합니다. 기존 업무 API는 유지합니다.")
     parser.add_argument("--extra-runs-today", type=int, choices=range(1, 31), default=0,
                         help="이번 서버 실행의 오늘(한국 시간)에만 내부 실행 1~30회 추가")
     args = parser.parse_args()
@@ -522,6 +563,12 @@ def main():
     auth = OfficeAuth(auth_config)
     clear_server_secrets(auth_config)
     configuration = _listener_configuration(args.port, auth, args.public_port)
+    next_gateway = None
+    if args.office_next:
+        if auth.mode not in ("github", "pairing"):
+            raise ValueError("새 사무실의 공개 연결에는 기존 소유자 인증이 필요합니다.")
+        from office.next_gateway import NextOfficeGateway
+        next_gateway = NextOfficeGateway()
     lock = InstanceLock(data_dir)
     office = None
     organization = None
@@ -530,7 +577,8 @@ def main():
         from office.organization import OrganizationEngine
         office = Office(ROOT, data_dir, start_scheduler=False)
         organization = OrganizationEngine(ROOT, data_dir, extra_runs_today=args.extra_runs_today)
-        servers = _bind_listeners(office, organization, configuration)
+        servers = _bind_listeners(office, organization, configuration,
+                                  **({"next_gateway": next_gateway} if next_gateway is not None else {}))
         for server, (_, listener_auth) in zip(servers, configuration):
             if listener_auth.mode in ("github", "pairing"):
                 print(f"DAS Lab AI Office: {listener_auth.public_origin} · HTTPS 연결 대상 127.0.0.1:{server.server_port}", flush=True)

@@ -40,6 +40,16 @@ test('mobile device pixels produce the same centered office within CSS viewport'
   }
 });
 
+test('observed 644px tablet layout keeps the entire room inside its 576.9px canvas',()=>{
+  const size={width:576.9,height:450.8};
+  for(const dpr of [1,1.25,1.5,2]) {
+    const view=fitOfficeViewport(layout,furniture,size,dpr);
+    const bounds=projectedBounds(view,size,dpr);
+    assert.ok(bounds.left>=15 && bounds.right<=size.width-15);
+    assert.ok(bounds.top>=23 && bounds.bottom<=size.height-23);
+  }
+});
+
 test('empty layout has finite safe fit',()=>{
   const view=fitOfficeViewport({...layout,tiles:layout.tiles.map(()=>255)},[],{width:640,height:480},1);
   assert.ok(Number.isFinite(view.zoom));assert.equal(view.pan.x,0);assert.equal(view.pan.y,0);

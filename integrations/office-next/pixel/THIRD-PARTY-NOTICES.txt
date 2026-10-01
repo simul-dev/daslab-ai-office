@@ -18,3 +18,15 @@ Bundled furniture/floor/wall assets are taken only from the pinned MIT-licensed
 repository. Optional third-party paid packs mentioned in upstream documentation
 are not downloaded or included. Separate distribution is subject to a fresh
 asset provenance review if additional packs are introduced.
+
+DAS Lab identity
+The brand/ directory contains the project's existing company wordmarks, copied
+without modification for the owner-authorized office UI. See brand/README.md
+for source and hashes. These company marks are not part of Pixel Agents' MIT
+license; this integration makes no claim to a general trademark license.
+
+QR Code Generator for JavaScript
+The existing authenticated host supplies /qr-code.js on demand for the local
+phone connection dialog. Copyright (c) 2009 Kazuhiko Arase, MIT license.
+Source and complete license notice remain in static/qr-code.js. No QR bearer
+token is written to persistent storage, application logs or this distribution.

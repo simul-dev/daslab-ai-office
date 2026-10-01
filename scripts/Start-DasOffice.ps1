@@ -9,6 +9,7 @@ param(
     [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$CredentialPath = (Join-Path $env:LOCALAPPDATA 'DASLab\ai-office\credentials.clixml'),
     [switch]$StartTunnel,
+    [switch]$OfficeNext,
     [string]$CloudflaredPath = (Join-Path $env:LOCALAPPDATA 'DASLab\tools\cloudflared.exe'),
     [ValidateRange(1, 65535)][int]$Port = 8772,
     [ValidateRange(1, 65535)][int]$PublicPort = 8774,
@@ -107,10 +108,12 @@ try {
         $serverSecrets[$idEnv] = $credentials.GitHubClientId
         $serverSecrets[$secretEnv] = $credentials.GitHubClientSecret
     }
-    $server = Start-PrivateChild $PythonPath @(
+    $serverArguments = @(
         (Join-Path $ProjectRoot 'server.py'), '--port', "$Port", '--public-port', "$PublicPort",
         '--auth-config', $authPath, '--data-dir', (Join-Path $ProjectRoot 'data')
-    ) $serverSecrets $false $nodeDirectory
+    )
+    if ($OfficeNext) { $serverArguments += '--office-next' }
+    $server = Start-PrivateChild $PythonPath $serverArguments $serverSecrets $false $nodeDirectory
     $handler = [Net.Http.HttpClientHandler]::new()
     $handler.UseProxy = $false
     $handler.UseCookies = $false
@@ -136,14 +139,18 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (-not $ready -or $server.HasExited) { throw 'Authentication readiness failed; no tunnel was started.' }
-    $privateRequest = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get, "http://127.0.0.1:$PublicPort/api/org")
-    $privateRequest.Headers.Host = $origin.Authority
-    try {
-        $privateResponse = $client.Send($privateRequest)
+    $privatePaths = @('/api/org')
+    if ($OfficeNext) { $privatePaths += '/api/office/snapshot' }
+    foreach ($privatePath in $privatePaths) {
+        $privateRequest = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get, "http://127.0.0.1:$PublicPort$privatePath")
+        $privateRequest.Headers.Host = $origin.Authority
         try {
-            if ([int]$privateResponse.StatusCode -ne 401) { throw 'Anonymous private API is reachable; no tunnel was started.' }
-        } finally { $privateResponse.Dispose() }
-    } finally { $privateRequest.Dispose() }
+            $privateResponse = $client.Send($privateRequest)
+            try {
+                if ([int]$privateResponse.StatusCode -ne 401) { throw 'Anonymous private API is reachable; no tunnel was started.' }
+            } finally { $privateResponse.Dispose() }
+        } finally { $privateRequest.Dispose() }
+    }
     if ($StartTunnel) {
         # Token-file is supported, but the process environment avoids even a temporary plaintext file.
         # Drain/discard tunnel output so diagnostics cannot print a token or request headers.

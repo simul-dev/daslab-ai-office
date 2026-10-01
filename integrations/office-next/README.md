@@ -4,20 +4,24 @@ The owner approved Paperclip organization management + Pixel Agents office visua
 
 ## Running instance
 
-- Pixel office: `http://127.0.0.1:8790/`
+- PC office: `http://127.0.0.1:8772/`, including phone pairing in the new UI when `-OfficeNext` is enabled.
+- Standalone Pixel development: `http://127.0.0.1:8790/` (no pairing controls).
+- Owner phone entry: `https://ai-office.daslab.co.kr/`, through the existing paired-device authentication gateway on 8774.
 - Paperclip management: `http://127.0.0.1:3101/`
 - Runtime/data: `%LOCALAPPDATA%\DASLab\ai-office-next`
 - Dedicated PostgreSQL: loopback `54329`, same isolated cluster under `state/instances/default/db`.
 - Worker workspace: `%USERPROFILE%\AI-Office-Next\workspace`, outside Windows app-package storage.
 - Knowledge snapshots: that workspace's `knowledge/`, with SHA256 and date provenance.
 
-All three listeners are local only. Paperclip uses `local_trusted`: local HTTP callers can act as board. This is a pilot control plane, **not a security boundary against hostile same-user processes**. Never publish these ports directly or repoint the existing authenticated phone tunnel to them. Public migration needs an authenticated proxy and its own validation.
+All three listeners are local only. Paperclip uses `local_trusted`: local HTTP callers can act as board. This is a pilot control plane, **not a security boundary against hostile same-user processes**. Never publish these ports directly or repoint the existing authenticated phone tunnel to them. The phone entry uses `office/next_gateway.py` behind the original 8774 owner session and strict route/Host/Origin checks; it does not expose Paperclip's administration API. See [phone authentication](../../docs/AUTH-INTEGRATION.md) for launch and verification scope.
 
 ## Components
 
 `bridge.mjs` exposes an allowlisted projection of the real company, employees, tasks, runs and comments. It checks Host and Origin, requires a UI header for mutations, and persists submission IDs to avoid duplicate tasks. No synthetic task state is used. Only a real running Paperclip run produces a working animation. A process exit is not evidence of task completion.
 
 `pixel/` reuses the upstream renderer and licensed assets. It supports office/list views, staff selection, reporting lines, task details and an instruction form. Actual occupied floor bounds determine zoom; an empty editor grid is excluded. First setup keeps `actionsEnabled` false. After the real trial finished, the operator enabled local instruction submission; repeated setup preserves that decision.
+
+The surrounding UI uses the original DAS Lab wordmark and navy/cyan brand with readable light work panels. Local phone pairing stays within the new office instead of sending the owner to the older UI. Existing records remain at `/office.html`; changing the entry screen does not migrate employee identities or recurring work.
 
 `roles/` defines six trial staff: owner assistant, PM, researcher, developer, QA and an independent strategy/investment analyst. This trial roster does not remove the existing R&D, marketing or sales employees. Existing recurring assignments continue in the original engine until explicitly migrated without duplication.
 
@@ -63,6 +67,6 @@ The real PM→initial QA→developer→QA changes requested→evidence correctio
 
 [The accepted synthetic example](examples/supply-chain-trial/README.md) is preserved in this repository with source hashes and a passing relocated test run. No customer data or operating database was copied. The live demo route serves exactly the configured in-workspace HTML in a sandboxed response without network or same-origin privileges.
 
-Subsequent work must connect existing employee identities/history, recurring duties and phone authentication, and provide a reliable browser verifier for workers. Production replacement is not accomplished by this trial UI or by editing role text. The original authenticated phone office continues to use its existing services and data.
+Subsequent work must connect existing employee identities/history and recurring duties, and provide a reliable browser verifier for workers. Production replacement is not accomplished by this trial UI or by editing role text. The phone first page now shows this office through the existing pairing session; `/office.html` preserves the original office and its records. Original recurring work remains on 8772. This is authenticated access to the new office, not a completed data or scheduler migration.
 
 Primary references: [Paperclip](https://github.com/paperclipai/paperclip), [Pixel Agents](https://github.com/pablodelucca/pixel-agents), [gstack](https://github.com/garrytan/gstack), [Codex Windows sandbox](https://learn.chatgpt.com/docs/windows/windows-sandbox).

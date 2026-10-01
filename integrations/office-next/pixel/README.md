@@ -2,8 +2,9 @@
 
 This isolated UI builds the real Pixel Agents `OfficeCanvas`, `OfficeState`,
 pathfinding and character renderer from the reviewed source pinned in
-`upstream.json`. No upstream source patch is needed. The original office on
-8772/8774, its database, voice input and authentication are not modified.
+`upstream.json`. No upstream source patch is needed. It can run behind the
+existing authenticated office gateway as well as the standalone loopback
+bridge. It does not replace the legacy database or authentication mechanism.
 
 ## Build
 
@@ -32,7 +33,7 @@ expose the unauthenticated development UI.
   notice and disables working animation and command submission. It does not
   invent progress, completion percentages or fictional tool activity.
 - `POST /api/office/issues` uses `{agentId, instruction, requestId}` and
-  `X-Office-Next: 1`. Buttons are disabled during submission. A failed request
+  `X-Office-Next: 1` and `X-DAS-Office: 1`. Buttons are disabled during submission. A failed request
   with unchanged contents keeps the same idempotency request ID on retry.
 - Direct assignments through this bridge to the configured developer attach
   Paperclip's QA review followed by PM approval, require comments, allow two
@@ -54,6 +55,34 @@ The upstream terminal/settings transport is replaced at build time with a
 presentation-only no-op module. This app does not start Claude, install hooks,
 scan other sessions, grant permissions, write global settings or run the
 upstream standalone server. Task creation is owned only by the Paperclip bridge.
+
+## Authentication and phone connection
+
+The UI checks same-origin `/api/auth` before reading private work. A missing
+endpoint is accepted only on loopback for the standalone bridge. Public 401s
+stop polling and submission; clicking the login button preserves only the
+current recipient, draft and matching retry ID in per-tab session storage for
+up to 24 hours. Restoration never submits automatically. Explicit logout clears
+that draft after `/api/auth` confirms the device is unauthenticated, including
+the host's normal POST → 303 → HTML login response.
+
+The new header exposes phone connection only for local authenticated mode with
+`pairing_available: true`, no read-only restriction, and an exact HTTPS public
+origin. Clicking it explicitly starts `/api/owner/pair/start`; no code is issued
+on page load. A code must target exactly the configured origin's `/login` with
+a single expected fragment. The existing host's MIT QR generator is loaded
+on demand. Code material exists only in memory and the open dialog.
+
+Closing, expiry, late responses and retry are serialized with
+`/api/owner/pair/cancel`. A fresh issuance cannot overtake cancellation. Failed
+cancellation removes the visible code and must be retried before a new code is
+issued. A phone scan does not automatically close the QR, because the UI has no
+verified consumption event. The operator closes it after connecting the phone.
+
+The shell uses actual project DAS Lab wordmarks and the navy/cyan/cool-white
+palette from `knowledge/office-brand.md`. Pixel engine layout and sprites are
+unchanged. Wordmark source and separate company-asset status are recorded in
+`public/brand/README.md`.
 
 ## License and verification
 
