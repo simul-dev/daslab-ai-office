@@ -1,0 +1,667 @@
+{
+  "schema_version": 1,
+  "captured_on": "2026-10-03",
+  "timezone": "Asia/Seoul",
+  "source": {
+    "thread_id": "01a0f08c-7053-7112-80d1-9dfed47dbaef",
+    "title": "AI office 구축",
+    "host_id": "local",
+    "retrieval": "codex_app.read_thread",
+    "page_count": 10,
+    "turn_count": 92,
+    "pagination_complete": true
+  },
+  "range": {
+    "first_turn": "2026-09-30T13:22:11.000+09:00",
+    "last_turn": "2026-10-02T15:11:10.000+09:00"
+  },
+  "scope": "개인 대화 전문을 공개하지 않는 회차 목록. 클라우드에 읽은 기록을 보존하며 이력 요약은 docs/LOCAL-CHAT-HANDOFF-2026-10-03.md에서 읽는다.",
+  "private_archive": "data/cloud-handoff/AI-OFFICE-THREAD-2026-10-03.json",
+  "entries": [
+    {
+      "turn_id": "01a0f08c-7504-7682-a44e-6bbff80c5dd0",
+      "started_at": "2026-09-30T13:22:11.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 1,
+      "final_response_count": 0
+    },
+    {
+      "turn_id": "01a0f08c-b62b-7403-937e-4d71a2345c40",
+      "started_at": "2026-09-30T13:22:28.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f08e-2784-7983-b56b-6459e3701042",
+      "started_at": "2026-09-30T13:24:03.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f090-1d76-7a01-ad63-784f9d34aec9",
+      "started_at": "2026-09-30T13:26:11.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f090-704e-76b0-a726-056cb29cccba",
+      "started_at": "2026-09-30T13:26:32.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f093-c9b4-7e12-b3a8-4d3fd88e1c02",
+      "started_at": "2026-09-30T13:30:12.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f098-582a-7e13-b0bf-b5287e2e827b",
+      "started_at": "2026-09-30T13:35:11.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f099-63fe-7013-965c-e553eb5e7a8f",
+      "started_at": "2026-09-30T13:36:19.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f09a-2a0e-7d62-b858-8ebca0c46fcf",
+      "started_at": "2026-09-30T13:37:10.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f09b-4b62-7853-a852-99ae449910d0",
+      "started_at": "2026-09-30T13:38:24.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f0a2-0a59-7680-859d-bbaefbde3919",
+      "started_at": "2026-09-30T13:45:46.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 1,
+      "final_response_count": 0
+    },
+    {
+      "turn_id": "01a0f0ab-ef1b-7621-818f-11bb76be964e",
+      "started_at": "2026-09-30T13:56:34.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f0c4-4797-7683-bf6f-82d1608f7f27",
+      "started_at": "2026-09-30T14:23:10.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f0c7-527e-7751-bba5-ad7a22a02f53",
+      "started_at": "2026-09-30T14:26:29.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f0c8-11f3-7581-b623-bd52bb4edbda",
+      "started_at": "2026-09-30T14:27:18.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f0ff-2ec8-7622-a5a7-597d65c8d2d9",
+      "started_at": "2026-09-30T15:27:30.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f104-6d6d-7863-a8c5-e23e032c732d",
+      "started_at": "2026-09-30T15:33:14.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f117-b234-7602-962c-708e3e46b392",
+      "started_at": "2026-09-30T15:54:17.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f11d-4061-7901-b6a0-925bafdb809c",
+      "started_at": "2026-09-30T16:00:21.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f129-d6a7-7710-a8bc-bf145cbe0c5c",
+      "started_at": "2026-09-30T16:14:06.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f139-9e39-7cf3-a0bd-fbdec6b26e04",
+      "started_at": "2026-09-30T16:31:20.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f144-f18f-7160-925c-a69b9244d64f",
+      "started_at": "2026-09-30T16:43:42.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f187-faf7-7a12-aaaa-651a5ae528c1",
+      "started_at": "2026-09-30T17:56:55.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f18b-a28c-7472-b015-a1486233b548",
+      "started_at": "2026-09-30T18:00:55.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 2
+    },
+    {
+      "turn_id": "01a0f1e8-10c0-7500-b7e5-c9ff8433f1fb",
+      "started_at": "2026-09-30T19:41:52.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f1ed-0821-7781-9947-38636296d4fb",
+      "started_at": "2026-09-30T19:47:18.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f253-5178-7662-aa61-240ea5cdace2",
+      "started_at": "2026-09-30T21:39:02.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f258-85c5-7180-916c-21278fa03ef2",
+      "started_at": "2026-09-30T21:44:42.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f2c8-30af-7500-b1b1-a7711cfc7474",
+      "started_at": "2026-09-30T23:46:41.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f2d2-0073-7343-b16c-6edca2d46e88",
+      "started_at": "2026-09-30T23:57:24.000+09:00",
+      "status": "completed",
+      "user_message_count": 2,
+      "final_response_count": 3
+    },
+    {
+      "turn_id": "01a0f2ed-9be4-7771-82b9-687e8de17da8",
+      "started_at": "2026-10-01T00:27:33.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f2f2-5a5e-78d2-9554-5ec3b5848b1e",
+      "started_at": "2026-10-01T00:32:44.000+09:00",
+      "status": "completed",
+      "user_message_count": 3,
+      "final_response_count": 4
+    },
+    {
+      "turn_id": "01a0f304-f6c7-7811-ac67-3933a43dae73",
+      "started_at": "2026-10-01T00:53:04.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 2,
+      "final_response_count": 2
+    },
+    {
+      "turn_id": "01a0f30f-a8d6-7622-aac2-b2514f4c2223",
+      "started_at": "2026-10-01T01:04:44.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f316-e079-7042-9cfc-a33805b1e6a0",
+      "started_at": "2026-10-01T01:12:38.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f31c-d340-7ce0-8354-de581924f249",
+      "started_at": "2026-10-01T01:19:07.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f321-67d9-7fa3-976d-20d681940efe",
+      "started_at": "2026-10-01T01:24:07.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f325-fbf3-7a51-9c0a-e4dd4a26e000",
+      "started_at": "2026-10-01T01:29:08.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f329-977c-79f0-ae9a-a5beba98bde1",
+      "started_at": "2026-10-01T01:33:04.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f32b-4977-7db2-a46d-8988c8b91f9e",
+      "started_at": "2026-10-01T01:34:55.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f333-298d-7022-971e-a60224ce2e25",
+      "started_at": "2026-10-01T01:43:32.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f33c-b6b6-73b1-ac33-31e0bc08f67f",
+      "started_at": "2026-10-01T01:53:57.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f34b-6ca3-76a3-acdc-400d5e5870f4",
+      "started_at": "2026-10-01T02:10:01.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f34c-c653-7871-a013-94928171952c",
+      "started_at": "2026-10-01T02:11:30.000+09:00",
+      "status": "completed",
+      "user_message_count": 2,
+      "final_response_count": 2
+    },
+    {
+      "turn_id": "01a0f355-d6b0-7063-bace-7644f2431507",
+      "started_at": "2026-10-01T02:21:24.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f35d-ef66-78e0-a82b-fcc50c6c8f8d",
+      "started_at": "2026-10-01T02:30:14.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f4c3-2a84-75f2-8d30-1e42b837d885",
+      "started_at": "2026-10-01T09:00:26.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f502-2086-7231-9237-933e784eaefc",
+      "started_at": "2026-10-01T10:09:12.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f505-aa1e-79e0-8a3e-5f38c79b0db5",
+      "started_at": "2026-10-01T10:13:04.000+09:00",
+      "status": "completed",
+      "user_message_count": 3,
+      "final_response_count": 3
+    },
+    {
+      "turn_id": "01a0f572-4d7c-7e43-a6a1-105a3f37bebf",
+      "started_at": "2026-10-01T12:11:44.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 2
+    },
+    {
+      "turn_id": "01a0f577-8f00-7fb1-977c-c3745ef72a40",
+      "started_at": "2026-10-01T12:17:28.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 2
+    },
+    {
+      "turn_id": "01a0f581-e7a8-7583-ade4-a6100cd53471",
+      "started_at": "2026-10-01T12:28:46.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 2
+    },
+    {
+      "turn_id": "01a0f5c1-239a-7140-8101-340bf43d9cc0",
+      "started_at": "2026-10-01T13:37:50.000+09:00",
+      "status": "completed",
+      "user_message_count": 3,
+      "final_response_count": 3
+    },
+    {
+      "turn_id": "01a0f62f-8b84-7b72-9d62-4e77b21150f9",
+      "started_at": "2026-10-01T15:38:26.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f640-87cc-7d60-98b3-92b677f90d5a",
+      "started_at": "2026-10-01T15:56:59.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f645-d56f-7e83-a9f2-6aed2e312dd3",
+      "started_at": "2026-10-01T16:02:46.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f646-a79e-7bf2-9136-4595e40d7fc0",
+      "started_at": "2026-10-01T16:03:40.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 1,
+      "final_response_count": 0
+    },
+    {
+      "turn_id": "01a0f648-441f-7172-9a41-4946ed536435",
+      "started_at": "2026-10-01T16:05:26.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f649-3b9e-7623-83c6-e217565a8717",
+      "started_at": "2026-10-01T16:06:29.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f69e-bff5-7f21-9654-51792a10cb70",
+      "started_at": "2026-10-01T17:39:54.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f6f2-2ed9-7591-b532-fa161d596225",
+      "started_at": "2026-10-01T19:11:02.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f754-c3f1-7373-9521-d1802d59525f",
+      "started_at": "2026-10-01T20:58:43.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 1,
+      "final_response_count": 0
+    },
+    {
+      "turn_id": "01a0f756-9e87-70d0-bdb5-7951035b1c5e",
+      "started_at": "2026-10-01T21:00:44.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 1,
+      "final_response_count": 0
+    },
+    {
+      "turn_id": "01a0f757-980c-75b2-aca2-8f349f7a2d68",
+      "started_at": "2026-10-01T21:01:48.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f786-cdbb-77b3-90c7-47e969278a60",
+      "started_at": "2026-10-01T21:53:22.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 1,
+      "final_response_count": 0
+    },
+    {
+      "turn_id": "01a0f790-1ca9-7361-8036-7eaad3be7878",
+      "started_at": "2026-10-01T22:03:32.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f79d-b098-7ea0-8ca1-6ef14e102daf",
+      "started_at": "2026-10-01T22:18:22.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f79f-b676-7c52-b941-e9e782082464",
+      "started_at": "2026-10-01T22:20:34.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f7a2-baf4-7210-9319-ffc9d846c16d",
+      "started_at": "2026-10-01T22:23:52.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 3,
+      "final_response_count": 4
+    },
+    {
+      "turn_id": "01a0f7ac-1b03-7872-bbf0-01ce0231b108",
+      "started_at": "2026-10-01T22:34:06.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 2
+    },
+    {
+      "turn_id": "01a0f7b2-ee47-79d3-af0a-e2a24f60ad28",
+      "started_at": "2026-10-01T22:41:33.000+09:00",
+      "status": "completed",
+      "user_message_count": 2,
+      "final_response_count": 3
+    },
+    {
+      "turn_id": "01a0f7c4-dcad-7420-a2f3-a5eca3799b4d",
+      "started_at": "2026-10-01T23:01:09.000+09:00",
+      "status": "completed",
+      "user_message_count": 2,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f7c8-33a2-7820-81e9-0056df9929eb",
+      "started_at": "2026-10-01T23:04:47.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f7cd-4adc-7491-a72e-bf221b82eb60",
+      "started_at": "2026-10-01T23:10:21.000+09:00",
+      "status": "completed",
+      "user_message_count": 3,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f7d4-4455-7071-b93e-f1a596069df8",
+      "started_at": "2026-10-01T23:17:58.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f7d5-2eab-7dd2-acbe-48c165d6fc95",
+      "started_at": "2026-10-01T23:18:58.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f7d6-c26f-7370-97ca-535771a9faa8",
+      "started_at": "2026-10-01T23:20:42.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f7d7-6da8-72b2-aec9-f686ecffdfaf",
+      "started_at": "2026-10-01T23:21:25.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0f9ea-fef4-7182-8d96-09f5145a4fcd",
+      "started_at": "2026-10-02T09:02:02.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fa82-1a31-7f22-ba49-04f0e9b7b89a",
+      "started_at": "2026-10-02T11:47:05.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fa83-7a40-7891-95b1-c791568b0ba1",
+      "started_at": "2026-10-02T11:48:35.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fa84-4d8d-79e2-a307-afd774c1e7da",
+      "started_at": "2026-10-02T11:49:29.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fa8b-11ee-7b73-8c20-f11925bbd686",
+      "started_at": "2026-10-02T11:56:53.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0faa7-3c63-73b3-bc2a-bcf29cb3bfa6",
+      "started_at": "2026-10-02T12:27:39.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fac4-78d1-7042-9a16-21124f23b574",
+      "started_at": "2026-10-02T12:59:35.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fac8-b74b-7bd0-adb2-fb67225ac8b3",
+      "started_at": "2026-10-02T13:04:13.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fac9-5ddf-7913-b75e-d796c1ca542b",
+      "started_at": "2026-10-02T13:04:55.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0facc-eff0-7d72-bc4d-d03df1a57fad",
+      "started_at": "2026-10-02T13:08:49.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fae4-d62d-7762-89a2-50c0a5813dd7",
+      "started_at": "2026-10-02T13:34:56.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fb20-34f2-7b50-8ba5-dc6ff9ee9dbf",
+      "started_at": "2026-10-02T14:39:47.000+09:00",
+      "status": "interrupted",
+      "user_message_count": 1,
+      "final_response_count": 0
+    },
+    {
+      "turn_id": "01a0fb20-a2db-7a53-b3e8-7690e1265f6d",
+      "started_at": "2026-10-02T14:40:15.000+09:00",
+      "status": "completed",
+      "user_message_count": 2,
+      "final_response_count": 1
+    },
+    {
+      "turn_id": "01a0fb3c-f08e-72c3-b82d-9746b421c9ff",
+      "started_at": "2026-10-02T15:11:10.000+09:00",
+      "status": "completed",
+      "user_message_count": 1,
+      "final_response_count": 1
+    }
+  ],
+  "private_archive_sha256": "0ab7eaf50da36a177cdae40edcac59c58124f3b0a9ccf19649de43b769ed5f2c"
+}
